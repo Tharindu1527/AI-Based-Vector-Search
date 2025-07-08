@@ -1,0 +1,16 @@
+fastapi
+uvicorn
+langchain
+langchain-community
+langchain-google-genai
+sentence-transformers
+google-generativeai
+pinecone-client
+python-docx
+python-pptx
+PyMuPDF
+python-dotenv
+python-multipart
+numpy
+pandas
+torch
