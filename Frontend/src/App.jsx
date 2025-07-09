@@ -1,8 +1,8 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Search, Upload, FileText, Trash2, Brain, Zap, Database, Globe, CheckCircle, AlertCircle, Loader, Eye, ChevronDown, ChevronUp, Book, TrendingUp, ArrowRight } from 'lucide-react';
+import { Search, Upload, FileText, Trash2, Brain, Zap, Database, Globe, CheckCircle, AlertCircle, Loader, Eye, ChevronDown, ChevronUp, Book, TrendingUp, ArrowRight, Plus, Edit, FolderPlus, Folder, Settings, X } from 'lucide-react';
 
 // Enhanced Search Results Component
-const EnhancedSearchResults = ({ searchResults, onDocumentSelect }) => {
+const EnhancedSearchResults = ({ searchResults, onDocumentSelect, spaces }) => {
   const [expandedSources, setExpandedSources] = useState({});
   const [selectedTab, setSelectedTab] = useState('answer');
 
@@ -30,6 +30,16 @@ const EnhancedSearchResults = ({ searchResults, onDocumentSelect }) => {
     }
   };
 
+  const getSpaceName = (spaceId) => {
+    const space = spaces.find(s => s.id === spaceId);
+    return space ? space.name : spaceId;
+  };
+
+  const getSpaceColor = (spaceId) => {
+    const space = spaces.find(s => s.id === spaceId);
+    return space ? space.color : '#6B7280';
+  };
+
   if (!searchResults) return null;
 
   return (
@@ -42,14 +52,20 @@ const EnhancedSearchResults = ({ searchResults, onDocumentSelect }) => {
         <div className="flex items-center gap-4 text-sm text-gray-500">
           <span>{searchResults.total_results} chunks found</span>
           <span>•</span>
-          <span>{searchResults.documents_searched || 0} documents searched</span>
+          <span>{searchResults.spaces_searched || 0} spaces searched</span>
+          <span>•</span>
+          <span>{searchResults.documents_searched || 0} documents</span>
           <span>•</span>
           <span className={`px-2 py-1 rounded-full text-xs font-medium ${
-            searchResults.search_scope === 'all_documents' 
-              ? 'bg-blue-100 text-blue-800' 
-              : 'bg-purple-100 text-purple-800'
+            searchResults.search_scope === 'all_spaces' ? 'bg-blue-100 text-blue-800' :
+            searchResults.search_scope === 'multi_space' ? 'bg-purple-100 text-purple-800' :
+            searchResults.search_scope === 'single_space' ? 'bg-green-100 text-green-800' :
+            'bg-orange-100 text-orange-800'
           }`}>
-            {searchResults.search_scope === 'all_documents' ? 'Multi-Document' : 'Single Document'}
+            {searchResults.search_scope === 'all_spaces' ? 'All Spaces' :
+             searchResults.search_scope === 'multi_space' ? 'Multi-Space' :
+             searchResults.search_scope === 'single_space' ? 'Single Space' :
+             'Single Document'}
           </span>
         </div>
       </div>
@@ -59,7 +75,7 @@ const EnhancedSearchResults = ({ searchResults, onDocumentSelect }) => {
         {[
           { id: 'answer', label: 'AI Answer', icon: Search },
           { id: 'sources', label: 'Sources', icon: FileText },
-          { id: 'insights', label: 'Cross-Document', icon: TrendingUp },
+          { id: 'insights', label: 'Cross-Space', icon: TrendingUp },
           { id: 'summary', label: 'Summary', icon: Book }
         ].map(tab => (
           <button
@@ -82,11 +98,11 @@ const EnhancedSearchResults = ({ searchResults, onDocumentSelect }) => {
         <div className="bg-gradient-to-r from-indigo-50 to-purple-50 rounded-lg p-6">
           <div className="flex items-start gap-3">
             <div className="p-2 bg-gradient-to-r from-indigo-500 to-purple-600 rounded-lg">
-              <Search className="h-5 w-5 text-white" />
+              <Brain className="h-5 w-5 text-white" />
             </div>
             <div className="flex-1">
               <h4 className="font-semibold text-gray-900 mb-3">
-                Comprehensive AI Analysis
+                AI Analysis Across Spaces
               </h4>
               <div className="prose prose-sm max-w-none text-gray-700 leading-relaxed">
                 {searchResults.answer.split('\n').map((paragraph, index) => (
@@ -117,7 +133,14 @@ const EnhancedSearchResults = ({ searchResults, onDocumentSelect }) => {
               {/* Source Header */}
               <div className="bg-gray-50 px-4 py-3 flex items-center justify-between">
                 <div className="flex items-center gap-3">
+                  <div 
+                    className="w-3 h-3 rounded-full"
+                    style={{ backgroundColor: getSpaceColor(source.space_id) }}
+                  ></div>
                   <div className="flex items-center gap-2">
+                    <Folder className="h-4 w-4 text-gray-500" />
+                    <span className="text-sm text-gray-600">{getSpaceName(source.space_id)}</span>
+                    <span className="text-gray-400">→</span>
                     <FileText className="h-4 w-4 text-gray-500" />
                     <span className="font-medium text-gray-900">{source.filename}</span>
                   </div>
@@ -132,11 +155,11 @@ const EnhancedSearchResults = ({ searchResults, onDocumentSelect }) => {
                 
                 <div className="flex items-center gap-2">
                   <button
-                    onClick={() => onDocumentSelect(source.filename)}
+                    onClick={() => onDocumentSelect(source.filename, source.space_id)}
                     className="text-xs text-indigo-600 hover:text-indigo-800 flex items-center gap-1"
                   >
                     <Eye size={12} />
-                    Search in doc
+                    Focus
                   </button>
                   <button
                     onClick={() => toggleSourceExpansion(source.id)}
@@ -177,10 +200,10 @@ const EnhancedSearchResults = ({ searchResults, onDocumentSelect }) => {
         </div>
       )}
 
-      {/* Cross-Document Insights Tab */}
+      {/* Cross-Space Insights Tab */}
       {selectedTab === 'insights' && (
         <div className="space-y-4">
-          <h4 className="font-semibold text-gray-900">Cross-Document Analysis</h4>
+          <h4 className="font-semibold text-gray-900">Cross-Space Analysis</h4>
           
           {searchResults.cross_document_insights && searchResults.cross_document_insights.length > 0 ? (
             <div className="space-y-3">
@@ -195,14 +218,16 @@ const EnhancedSearchResults = ({ searchResults, onDocumentSelect }) => {
                         </span>
                       </div>
                       <p className="text-gray-700 text-sm mb-2">{insight.insight}</p>
-                      <div className="flex items-center gap-1 text-xs text-gray-500">
-                        <span>Documents:</span>
-                        {insight.documents.map((doc, i) => (
-                          <span key={i} className="bg-white px-2 py-1 rounded border">
-                            {doc}
-                          </span>
-                        ))}
-                      </div>
+                      {insight.spaces && (
+                        <div className="flex items-center gap-1 text-xs text-gray-500">
+                          <span>Spaces:</span>
+                          {insight.spaces.map((spaceId, i) => (
+                            <span key={i} className="bg-white px-2 py-1 rounded border">
+                              {getSpaceName(spaceId)}
+                            </span>
+                          ))}
+                        </div>
+                      )}
                     </div>
                   </div>
                 </div>
@@ -211,13 +236,13 @@ const EnhancedSearchResults = ({ searchResults, onDocumentSelect }) => {
           ) : (
             <div className="text-center py-8 text-gray-500">
               <TrendingUp className="h-8 w-8 mx-auto mb-2 text-gray-400" />
-              <p>Cross-document insights available when searching multiple documents</p>
+              <p>Cross-space insights available when searching multiple spaces</p>
             </div>
           )}
         </div>
       )}
 
-      {/* Document Summary Tab */}
+      {/* Summary Tab */}
       {selectedTab === 'summary' && searchResults.document_summary && (
         <div className="space-y-6">
           <h4 className="font-semibold text-gray-900">Search Summary</h4>
@@ -226,78 +251,209 @@ const EnhancedSearchResults = ({ searchResults, onDocumentSelect }) => {
           <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
             <div className="bg-blue-50 rounded-lg p-4 text-center">
               <div className="text-2xl font-bold text-blue-600">
-                {searchResults.document_summary.total_documents}
+                {searchResults.document_summary.total_spaces || 0}
               </div>
-              <div className="text-sm text-blue-700">Documents</div>
+              <div className="text-sm text-blue-700">Spaces</div>
             </div>
             <div className="bg-green-50 rounded-lg p-4 text-center">
               <div className="text-2xl font-bold text-green-600">
-                {searchResults.document_summary.total_chunks_analyzed}
+                {searchResults.document_summary.total_documents || 0}
               </div>
-              <div className="text-sm text-green-700">Chunks Analyzed</div>
+              <div className="text-sm text-green-700">Documents</div>
             </div>
             <div className="bg-purple-50 rounded-lg p-4 text-center">
               <div className="text-2xl font-bold text-purple-600">
-                {searchResults.document_summary.relevance_distribution?.high || 0}
+                {searchResults.document_summary.total_chunks_analyzed || 0}
               </div>
-              <div className="text-sm text-purple-700">Highly Relevant</div>
+              <div className="text-sm text-purple-700">Chunks Analyzed</div>
             </div>
             <div className="bg-orange-50 rounded-lg p-4 text-center">
               <div className="text-2xl font-bold text-orange-600">
-                {(searchResults.document_summary.relevance_distribution?.medium || 0) + 
-                 (searchResults.document_summary.relevance_distribution?.low || 0)}
+                {searchResults.document_summary.relevance_distribution?.high || 0}
               </div>
-              <div className="text-sm text-orange-700">Other Matches</div>
+              <div className="text-sm text-orange-700">Highly Relevant</div>
             </div>
           </div>
           
-          {/* Document Details */}
-          <div>
-            <h5 className="font-medium text-gray-900 mb-3">Document Breakdown</h5>
-            <div className="space-y-2">
-              {searchResults.document_summary.documents_list?.map((doc, index) => (
-                <div key={index} className="flex items-center justify-between p-3 bg-gray-50 rounded-lg">
-                  <div className="flex items-center gap-3">
-                    <FileText className="h-4 w-4 text-gray-500" />
-                    <span className="font-medium text-gray-900">{doc.filename}</span>
+          {/* Spaces Summary */}
+          {searchResults.document_summary.spaces_list && (
+            <div>
+              <h5 className="font-medium text-gray-900 mb-3">Spaces Analyzed</h5>
+              <div className="space-y-2">
+                {searchResults.document_summary.spaces_list.map((space, index) => (
+                  <div key={index} className="flex items-center justify-between p-3 bg-gray-50 rounded-lg">
+                    <div className="flex items-center gap-3">
+                      <div 
+                        className="w-3 h-3 rounded-full"
+                        style={{ backgroundColor: getSpaceColor(space.space_id) }}
+                      ></div>
+                      <Folder className="h-4 w-4 text-gray-500" />
+                      <span className="font-medium text-gray-900">{getSpaceName(space.space_id)}</span>
+                    </div>
+                    <div className="flex items-center gap-4 text-sm text-gray-600">
+                      <span>{space.documents_count} docs</span>
+                      <span>{space.chunks_found} chunks</span>
+                      <span className="px-2 py-1 bg-white rounded border">
+                        {(space.max_relevance * 100).toFixed(1)}% max relevance
+                      </span>
+                    </div>
                   </div>
-                  <div className="flex items-center gap-4 text-sm text-gray-600">
-                    <span>{doc.chunks_found} chunks found</span>
-                    <span className="px-2 py-1 bg-white rounded border">
-                      {(doc.max_relevance * 100).toFixed(1)}% max relevance
-                    </span>
-                    <button
-                      onClick={() => onDocumentSelect(doc.filename)}
-                      className="text-indigo-600 hover:text-indigo-800 flex items-center gap-1"
-                    >
-                      <ArrowRight size={12} />
-                      Focus
-                    </button>
-                  </div>
-                </div>
-              )) || []}
+                ))}
+              </div>
             </div>
-          </div>
+          )}
         </div>
       )}
     </div>
   );
 };
 
+// Space Management Modal
+const SpaceModal = ({ isOpen, onClose, space, onSave, mode = 'create' }) => {
+  const [formData, setFormData] = useState({
+    name: space?.name || '',
+    description: space?.description || '',
+    color: space?.color || '#3B82F6'
+  });
+
+  const [errors, setErrors] = useState({});
+
+  useEffect(() => {
+    if (space) {
+      setFormData({
+        name: space.name || '',
+        description: space.description || '',
+        color: space.color || '#3B82F6'
+      });
+    }
+  }, [space]);
+
+  const handleSubmit = (e) => {
+    e.preventDefault();
+    const newErrors = {};
+
+    if (!formData.name.trim()) {
+      newErrors.name = 'Space name is required';
+    }
+
+    if (Object.keys(newErrors).length > 0) {
+      setErrors(newErrors);
+      return;
+    }
+
+    onSave(formData);
+    setFormData({ name: '', description: '', color: '#3B82F6' });
+    setErrors({});
+  };
+
+  if (!isOpen) return null;
+
+  const colorOptions = [
+    '#3B82F6', '#EF4444', '#10B981', '#F59E0B',
+    '#8B5CF6', '#EC4899', '#06B6D4', '#84CC16'
+  ];
+
+  return (
+    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+      <div className="bg-white rounded-xl shadow-xl p-6 w-full max-w-md">
+        <div className="flex justify-between items-center mb-4">
+          <h3 className="text-lg font-semibold text-gray-900">
+            {mode === 'create' ? 'Create New Space' : 'Edit Space'}
+          </h3>
+          <button
+            onClick={onClose}
+            className="p-1 hover:bg-gray-100 rounded"
+          >
+            <X size={20} />
+          </button>
+        </div>
+
+        <form onSubmit={handleSubmit} className="space-y-4">
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-2">
+              Space Name
+            </label>
+            <input
+              type="text"
+              value={formData.name}
+              onChange={(e) => setFormData({ ...formData, name: e.target.value })}
+              className={`w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-indigo-500 ${
+                errors.name ? 'border-red-500' : 'border-gray-300'
+              }`}
+              placeholder="e.g., Medical Documents, Legal Files"
+            />
+            {errors.name && <p className="text-red-500 text-xs mt-1">{errors.name}</p>}
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-2">
+              Description (Optional)
+            </label>
+            <textarea
+              value={formData.description}
+              onChange={(e) => setFormData({ ...formData, description: e.target.value })}
+              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500"
+              rows={3}
+              placeholder="Brief description of this space..."
+            />
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-2">
+              Color Theme
+            </label>
+            <div className="flex gap-2">
+              {colorOptions.map(color => (
+                <button
+                  key={color}
+                  type="button"
+                  onClick={() => setFormData({ ...formData, color })}
+                  className={`w-8 h-8 rounded-full border-2 ${
+                    formData.color === color ? 'border-gray-400' : 'border-gray-200'
+                  }`}
+                  style={{ backgroundColor: color }}
+                />
+              ))}
+            </div>
+          </div>
+
+          <div className="flex gap-3 pt-4">
+            <button
+              type="button"
+              onClick={onClose}
+              className="flex-1 px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50"
+            >
+              Cancel
+            </button>
+            <button
+              type="submit"
+              className="flex-1 px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700"
+            >
+              {mode === 'create' ? 'Create Space' : 'Save Changes'}
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+};
+
 // Main App Component
 const SemanticSearchApp = () => {
-  const [activeTab, setActiveTab] = useState('search');
+  const [activeTab, setActiveTab] = useState('spaces');
   const [searchQuery, setSearchQuery] = useState('');
   const [searchResults, setSearchResults] = useState(null);
-  const [documents, setDocuments] = useState([]);
+  const [spaces, setSpaces] = useState([]);
+  const [selectedSpaces, setSelectedSpaces] = useState([]);
   const [selectedFile, setSelectedFile] = useState(null);
+  const [selectedSpace, setSelectedSpace] = useState('');
   const [isUploading, setIsUploading] = useState(false);
   const [isSearching, setIsSearching] = useState(false);
-  const [selectedDocument, setSelectedDocument] = useState('');
   const [maxResults, setMaxResults] = useState(10);
   const [stats, setStats] = useState(null);
   const [health, setHealth] = useState(null);
   const [notifications, setNotifications] = useState([]);
+  const [spaceModal, setSpaceModal] = useState({ isOpen: false, mode: 'create', space: null });
   const fileInputRef = useRef(null);
 
   const API_BASE = 'http://localhost:8000';
@@ -311,14 +467,167 @@ const SemanticSearchApp = () => {
     }, 5000);
   };
 
-  // Fetch documents
-  const fetchDocuments = async () => {
+  // Fetch spaces
+  const fetchSpaces = async () => {
     try {
-      const response = await fetch(`${API_BASE}/documents`);
+      const response = await fetch(`${API_BASE}/spaces`);
       const data = await response.json();
-      setDocuments(data.indexed_documents || []);
+      setSpaces(data.spaces || []);
     } catch (error) {
-      addNotification('Failed to fetch documents', 'error');
+      addNotification('Failed to fetch spaces', 'error');
+    }
+  };
+
+  // Create space
+  const handleCreateSpace = async (spaceData) => {
+    try {
+      const response = await fetch(`${API_BASE}/spaces`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(spaceData),
+      });
+
+      if (response.ok) {
+        const data = await response.json();
+        addNotification(`Space "${spaceData.name}" created successfully`, 'success');
+        fetchSpaces();
+        setSpaceModal({ isOpen: false, mode: 'create', space: null });
+      } else {
+        const error = await response.json();
+        addNotification(error.detail || 'Failed to create space', 'error');
+      }
+    } catch (error) {
+      addNotification('Failed to create space', 'error');
+    }
+  };
+
+  // Update space
+  const handleUpdateSpace = async (spaceData) => {
+    try {
+      const response = await fetch(`${API_BASE}/spaces/${spaceModal.space.id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(spaceData),
+      });
+
+      if (response.ok) {
+        addNotification(`Space updated successfully`, 'success');
+        fetchSpaces();
+        setSpaceModal({ isOpen: false, mode: 'create', space: null });
+      } else {
+        const error = await response.json();
+        addNotification(error.detail || 'Failed to update space', 'error');
+      }
+    } catch (error) {
+      addNotification('Failed to update space', 'error');
+    }
+  };
+
+  // Delete space
+  const handleDeleteSpace = async (spaceId, spaceName) => {
+    if (!confirm(`Are you sure you want to delete "${spaceName}" and all its documents?`)) {
+      return;
+    }
+
+    try {
+      const response = await fetch(`${API_BASE}/spaces/${spaceId}`, {
+        method: 'DELETE',
+      });
+
+      if (response.ok) {
+        addNotification(`Space "${spaceName}" deleted successfully`, 'success');
+        fetchSpaces();
+        fetchStats();
+      } else {
+        addNotification('Failed to delete space', 'error');
+      }
+    } catch (error) {
+      addNotification('Failed to delete space', 'error');
+    }
+  };
+
+  // Upload file to space
+  const handleFileUpload = async () => {
+    if (!selectedFile || !selectedSpace) {
+      addNotification('Please select both a file and a space', 'error');
+      return;
+    }
+
+    setIsUploading(true);
+    const formData = new FormData();
+    formData.append('file', selectedFile);
+
+    try {
+      const response = await fetch(`${API_BASE}/spaces/${selectedSpace}/upload`, {
+        method: 'POST',
+        body: formData,
+      });
+
+      if (response.ok) {
+        const data = await response.json();
+        addNotification(`Successfully uploaded to ${data.space_name}`, 'success');
+        setSelectedFile(null);
+        setSelectedSpace('');
+        fileInputRef.current.value = '';
+        fetchSpaces();
+        fetchStats();
+      } else {
+        const error = await response.json();
+        addNotification(error.detail || 'Upload failed', 'error');
+      }
+    } catch (error) {
+      addNotification('Upload failed: Network error', 'error');
+    } finally {
+      setIsUploading(false);
+    }
+  };
+
+  // Enhanced search function
+  const handleSearch = async () => {
+    if (!searchQuery.trim()) return;
+
+    setIsSearching(true);
+    try {
+      const url = new URL(`${API_BASE}/search`);
+      url.searchParams.append('q', searchQuery);
+      url.searchParams.append('max_results', maxResults.toString());
+      
+      if (selectedSpaces.length > 0) {
+        url.searchParams.append('space_ids', selectedSpaces.join(','));
+      }
+
+      const response = await fetch(url);
+      const data = await response.json();
+      setSearchResults(data);
+      
+      const scope = selectedSpaces.length > 0 ? 
+        `${selectedSpaces.length} selected space${selectedSpaces.length > 1 ? 's' : ''}` : 
+        'all spaces';
+      addNotification(`Search completed across ${scope}`, 'success');
+      
+    } catch (error) {
+      addNotification('Search failed', 'error');
+    } finally {
+      setIsSearching(false);
+    }
+  };
+
+  // Delete document from space
+  const handleDeleteDocument = async (filename, spaceId) => {
+    try {
+      const response = await fetch(`${API_BASE}/spaces/${spaceId}/documents/${filename}`, {
+        method: 'DELETE',
+      });
+
+      if (response.ok) {
+        addNotification(`Deleted: ${filename}`, 'success');
+        fetchSpaces();
+        fetchStats();
+      } else {
+        addNotification('Failed to delete document', 'error');
+      }
+    } catch (error) {
+      addNotification('Delete failed', 'error');
     }
   };
 
@@ -344,87 +653,8 @@ const SemanticSearchApp = () => {
     }
   };
 
-  // Upload file
-  const handleFileUpload = async () => {
-    if (!selectedFile) return;
-
-    setIsUploading(true);
-    const formData = new FormData();
-    formData.append('file', selectedFile);
-
-    try {
-      const response = await fetch(`${API_BASE}/upload`, {
-        method: 'POST',
-        body: formData,
-      });
-
-      if (response.ok) {
-        const data = await response.json();
-        addNotification(`Successfully uploaded: ${data.filename}`, 'success');
-        setSelectedFile(null);
-        fileInputRef.current.value = '';
-        fetchDocuments();
-        fetchStats();
-      } else {
-        const error = await response.json();
-        addNotification(error.detail || 'Upload failed', 'error');
-      }
-    } catch (error) {
-      addNotification('Upload failed: Network error', 'error');
-    } finally {
-      setIsUploading(false);
-    }
-  };
-
-  // Enhanced search function
-  const handleSearch = async () => {
-    if (!searchQuery.trim()) return;
-
-    setIsSearching(true);
-    try {
-      const url = new URL(`${API_BASE}/search`);
-      url.searchParams.append('q', searchQuery);
-      url.searchParams.append('max_results', maxResults.toString());
-      if (selectedDocument) {
-        url.searchParams.append('filename', selectedDocument);
-      }
-
-      const response = await fetch(url);
-      const data = await response.json();
-      setSearchResults(data);
-      
-      // Show success notification with search scope
-      const scope = selectedDocument ? 'single document' : `${data.documents_searched || 0} documents`;
-      addNotification(`Search completed across ${scope}`, 'success');
-      
-    } catch (error) {
-      addNotification('Search failed', 'error');
-    } finally {
-      setIsSearching(false);
-    }
-  };
-
-  // Delete document
-  const handleDeleteDocument = async (filename) => {
-    try {
-      const response = await fetch(`${API_BASE}/documents/${filename}`, {
-        method: 'DELETE',
-      });
-
-      if (response.ok) {
-        addNotification(`Deleted: ${filename}`, 'success');
-        fetchDocuments();
-        fetchStats();
-      } else {
-        addNotification('Failed to delete document', 'error');
-      }
-    } catch (error) {
-      addNotification('Delete failed', 'error');
-    }
-  };
-
   useEffect(() => {
-    fetchDocuments();
+    fetchSpaces();
     fetchStats();
     fetchHealth();
   }, []);
@@ -451,6 +681,15 @@ const SemanticSearchApp = () => {
         <Notification key={notification.id} notification={notification} />
       ))}
 
+      {/* Space Modal */}
+      <SpaceModal
+        isOpen={spaceModal.isOpen}
+        onClose={() => setSpaceModal({ isOpen: false, mode: 'create', space: null })}
+        space={spaceModal.space}
+        onSave={spaceModal.mode === 'create' ? handleCreateSpace : handleUpdateSpace}
+        mode={spaceModal.mode}
+      />
+
       {/* Header */}
       <header className="bg-white shadow-sm border-b border-gray-200">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
@@ -461,7 +700,7 @@ const SemanticSearchApp = () => {
               </div>
               <div>
                 <h1 className="text-xl font-bold text-gray-900">Semantic Search</h1>
-                <p className="text-sm text-gray-500">AI-Powered Multi-Document Intelligence</p>
+                <p className="text-sm text-gray-500">AI-Powered Document Intelligence with Spaces</p>
               </div>
             </div>
             
@@ -484,9 +723,9 @@ const SemanticSearchApp = () => {
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="flex space-x-8">
             {[
+              { id: 'spaces', label: 'Spaces', icon: Folder },
               { id: 'search', label: 'Search', icon: Search },
               { id: 'upload', label: 'Upload', icon: Upload },
-              { id: 'documents', label: 'Documents', icon: FileText },
               { id: 'analytics', label: 'Analytics', icon: Database }
             ].map(tab => (
               <button
@@ -508,6 +747,143 @@ const SemanticSearchApp = () => {
 
       {/* Main Content */}
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+        {/* Spaces Tab */}
+        {activeTab === 'spaces' && (
+          <div className="space-y-6">
+            {/* Header with Create Button */}
+            <div className="flex justify-between items-center">
+              <div>
+                <h2 className="text-2xl font-bold text-gray-900">Document Spaces</h2>
+                <p className="text-gray-600">Organize your documents into themed spaces</p>
+              </div>
+              <button
+                onClick={() => setSpaceModal({ isOpen: true, mode: 'create', space: null })}
+                className="flex items-center gap-2 px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition-colors"
+              >
+                <Plus size={16} />
+                Create Space
+              </button>
+            </div>
+
+            {/* Spaces Grid */}
+            {spaces.length === 0 ? (
+              <div className="text-center py-12 bg-white rounded-xl border-2 border-dashed border-gray-300">
+                <FolderPlus className="mx-auto h-12 w-12 text-gray-400 mb-4" />
+                <h3 className="text-lg font-medium text-gray-900 mb-2">No spaces yet</h3>
+                <p className="text-gray-500 mb-4">Create your first space to organize documents</p>
+                <button
+                  onClick={() => setSpaceModal({ isOpen: true, mode: 'create', space: null })}
+                  className="px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700"
+                >
+                  Create Your First Space
+                </button>
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                {spaces.map(space => (
+                  <div key={space.id} className="bg-white rounded-xl shadow-sm border border-gray-200 p-6 hover:shadow-md transition-shadow">
+                    {/* Space Header */}
+                    <div className="flex items-start justify-between mb-4">
+                      <div className="flex items-center gap-3">
+                        <div 
+                          className="w-4 h-4 rounded-full"
+                          style={{ backgroundColor: space.color }}
+                        ></div>
+                        <h3 className="font-semibold text-gray-900">{space.name}</h3>
+                      </div>
+                      <div className="flex items-center gap-1">
+                        <button
+                          onClick={() => setSpaceModal({ isOpen: true, mode: 'edit', space })}
+                          className="p-1 hover:bg-gray-100 rounded"
+                          title="Edit space"
+                        >
+                          <Edit size={14} />
+                        </button>
+                        <button
+                          onClick={() => handleDeleteSpace(space.id, space.name)}
+                          className="p-1 hover:bg-red-100 text-red-600 rounded"
+                          title="Delete space"
+                        >
+                          <Trash2 size={14} />
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* Space Description */}
+                    {space.description && (
+                      <p className="text-sm text-gray-600 mb-4">{space.description}</p>
+                    )}
+
+                    {/* Space Stats */}
+                    <div className="grid grid-cols-2 gap-4 mb-4">
+                      <div className="text-center p-3 bg-gray-50 rounded-lg">
+                        <div className="text-xl font-bold text-gray-900">{space.document_count}</div>
+                        <div className="text-xs text-gray-500">Documents</div>
+                      </div>
+                      <div className="text-center p-3 bg-gray-50 rounded-lg">
+                        <div className="text-xl font-bold text-gray-900">
+                          {(space.total_size_bytes / 1024 / 1024).toFixed(1)}MB
+                        </div>
+                        <div className="text-xs text-gray-500">Size</div>
+                      </div>
+                    </div>
+
+                    {/* Space Actions */}
+                    <div className="flex gap-2">
+                      <button
+                        onClick={() => {
+                          setSelectedSpaces([space.id]);
+                          setActiveTab('search');
+                        }}
+                        className="flex-1 px-3 py-2 bg-indigo-50 text-indigo-700 rounded-lg hover:bg-indigo-100 text-sm font-medium"
+                      >
+                        Search
+                      </button>
+                      <button
+                        onClick={() => {
+                          setSelectedSpace(space.id);
+                          setActiveTab('upload');
+                        }}
+                        className="flex-1 px-3 py-2 bg-green-50 text-green-700 rounded-lg hover:bg-green-100 text-sm font-medium"
+                      >
+                        Upload
+                      </button>
+                    </div>
+
+                    {/* Recent Documents */}
+                    {space.documents && space.documents.length > 0 && (
+                      <div className="mt-4 pt-4 border-t border-gray-200">
+                        <div className="flex items-center justify-between mb-2">
+                          <span className="text-xs font-medium text-gray-500">RECENT DOCUMENTS</span>
+                          <span className="text-xs text-gray-400">{space.documents.length} total</span>
+                        </div>
+                        <div className="space-y-1">
+                          {space.documents.slice(0, 3).map(doc => (
+                            <div key={doc} className="flex items-center justify-between text-xs">
+                              <span className="text-gray-700 truncate">{doc}</span>
+                              <button
+                                onClick={() => handleDeleteDocument(doc, space.id)}
+                                className="p-1 hover:bg-red-100 text-red-500 rounded opacity-0 group-hover:opacity-100"
+                              >
+                                <Trash2 size={10} />
+                              </button>
+                            </div>
+                          ))}
+                          {space.documents.length > 3 && (
+                            <div className="text-xs text-gray-400">
+                              +{space.documents.length - 3} more documents
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+
         {/* Enhanced Search Tab */}
         {activeTab === 'search' && (
           <div className="space-y-6">
@@ -517,30 +893,56 @@ const SemanticSearchApp = () => {
                 Intelligent Document Search
               </h2>
               
-              {/* Search Configuration */}
+              {/* Space Selection */}
               <div className="mb-4 p-4 bg-gray-50 rounded-lg">
                 <div className="flex items-center justify-between mb-3">
                   <h3 className="font-medium text-gray-900">Search Scope</h3>
                   <span className="text-sm text-gray-500">
-                    {documents.length} documents available
+                    {spaces.length} spaces available
                   </span>
                 </div>
                 
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   <div>
                     <label className="block text-sm font-medium text-gray-700 mb-2">
-                      Target Documents
+                      Target Spaces
                     </label>
-                    <select
-                      value={selectedDocument}
-                      onChange={(e) => setSelectedDocument(e.target.value)}
-                      className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-indigo-500"
-                    >
-                      <option value="">🌐 Search All Documents</option>
-                      {documents.map(doc => (
-                        <option key={doc} value={doc}>📄 {doc}</option>
+                    <div className="space-y-2 max-h-40 overflow-y-auto">
+                      <label className="flex items-center">
+                        <input
+                          type="checkbox"
+                          checked={selectedSpaces.length === 0}
+                          onChange={(e) => {
+                            if (e.target.checked) {
+                              setSelectedSpaces([]);
+                            }
+                          }}
+                          className="mr-2"
+                        />
+                        <span className="text-sm">🌐 Search All Spaces</span>
+                      </label>
+                      {spaces.map(space => (
+                        <label key={space.id} className="flex items-center">
+                          <input
+                            type="checkbox"
+                            checked={selectedSpaces.includes(space.id)}
+                            onChange={(e) => {
+                              if (e.target.checked) {
+                                setSelectedSpaces([...selectedSpaces, space.id]);
+                              } else {
+                                setSelectedSpaces(selectedSpaces.filter(id => id !== space.id));
+                              }
+                            }}
+                            className="mr-2"
+                          />
+                          <div 
+                            className="w-3 h-3 rounded-full mr-2"
+                            style={{ backgroundColor: space.color }}
+                          ></div>
+                          <span className="text-sm">{space.name} ({space.document_count} docs)</span>
+                        </label>
                       ))}
-                    </select>
+                    </div>
                   </div>
                   
                   <div>
@@ -558,23 +960,6 @@ const SemanticSearchApp = () => {
                       <option value={30}>30 - Deep Analysis</option>
                     </select>
                   </div>
-                  
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-2">
-                      Search Type
-                    </label>
-                    <div className="flex items-center gap-2 text-sm">
-                      {selectedDocument ? (
-                        <span className="px-3 py-1 bg-purple-100 text-purple-800 rounded-full">
-                          Single Document
-                        </span>
-                      ) : (
-                        <span className="px-3 py-1 bg-blue-100 text-blue-800 rounded-full">
-                          Multi-Document
-                        </span>
-                      )}
-                    </div>
-                  </div>
                 </div>
               </div>
               
@@ -586,9 +971,9 @@ const SemanticSearchApp = () => {
                     value={searchQuery}
                     onChange={(e) => setSearchQuery(e.target.value)}
                     onKeyPress={(e) => e.key === 'Enter' && handleSearch()}
-                    placeholder={selectedDocument 
-                      ? `Search within ${selectedDocument}...` 
-                      : "Search across all documents for comprehensive insights..."
+                    placeholder={selectedSpaces.length > 0 
+                      ? `Search within ${selectedSpaces.length} selected space${selectedSpaces.length > 1 ? 's' : ''}...` 
+                      : "Search across all spaces for comprehensive insights..."
                     }
                     className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent text-lg"
                   />
@@ -606,15 +991,15 @@ const SemanticSearchApp = () => {
 
               {/* Advanced Search Examples */}
               <div className="space-y-3">
-                <h4 className="font-medium text-gray-900">Try these advanced queries:</h4>
+                <h4 className="font-medium text-gray-900">Try these cross-space queries:</h4>
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
                   {[
-                    "Compare methodologies across all research papers",
-                    "What are the main conclusions from the studies?",
-                    "Find contradictions or different viewpoints",
-                    "Summarize key findings from all documents",
-                    "How do the results vary between different approaches?",
-                    "What are the common themes mentioned?"
+                    "Compare methodologies across research spaces",
+                    "Find contradictions between legal and medical documents",
+                    "What are common themes in all my documents?",
+                    "Summarize key findings from financial reports",
+                    "How do conclusions vary across different studies?",
+                    "What are the main recommendations across spaces?"
                   ].map(example => (
                     <button
                       key={example}
@@ -631,10 +1016,10 @@ const SemanticSearchApp = () => {
               <div className="mt-4 p-3 bg-blue-50 rounded-lg">
                 <h4 className="font-medium text-blue-900 mb-2">💡 Search Tips</h4>
                 <ul className="text-sm text-blue-800 space-y-1">
-                  <li>• Ask comparative questions to analyze multiple documents</li>
-                  <li>• Use specific terms to find exact information</li>
-                  <li>• Try conceptual queries to discover connections</li>
-                  <li>• Select a specific document for focused analysis</li>
+                  <li>• Select specific spaces to focus your search</li>
+                  <li>• Ask comparative questions to analyze multiple spaces</li>
+                  <li>• Use conceptual queries to discover connections</li>
+                  <li>• Leave spaces unselected to search everything</li>
                 </ul>
               </div>
             </div>
@@ -643,8 +1028,9 @@ const SemanticSearchApp = () => {
             {searchResults && (
               <EnhancedSearchResults 
                 searchResults={searchResults}
-                onDocumentSelect={(filename) => {
-                  setSelectedDocument(filename);
+                spaces={spaces}
+                onDocumentSelect={(filename, spaceId) => {
+                  setSelectedSpaces([spaceId]);
                   addNotification(`Focused search on: ${filename}`, 'info');
                 }}
               />
@@ -657,6 +1043,36 @@ const SemanticSearchApp = () => {
           <div className="space-y-6">
             <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
               <h2 className="text-lg font-semibold text-gray-900 mb-4">Upload Documents</h2>
+              
+              {/* Space Selection for Upload */}
+              <div className="mb-6">
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  Select Target Space
+                </label>
+                <select
+                  value={selectedSpace}
+                  onChange={(e) => setSelectedSpace(e.target.value)}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500"
+                >
+                  <option value="">Choose a space...</option>
+                  {spaces.map(space => (
+                    <option key={space.id} value={space.id}>
+                      {space.name} ({space.document_count} documents)
+                    </option>
+                  ))}
+                </select>
+                {spaces.length === 0 && (
+                  <p className="text-sm text-gray-500 mt-2">
+                    No spaces available. 
+                    <button 
+                      onClick={() => setActiveTab('spaces')}
+                      className="text-indigo-600 hover:text-indigo-800 ml-1"
+                    >
+                      Create a space first
+                    </button>
+                  </p>
+                )}
+              </div>
               
               {/* Drop Zone */}
               <div className="border-2 border-dashed border-gray-300 rounded-lg p-8 text-center hover:border-indigo-400 transition-colors">
@@ -682,28 +1098,49 @@ const SemanticSearchApp = () => {
                 </button>
               </div>
 
-              {/* Selected File */}
-              {selectedFile && (
+              {/* Selected File and Space */}
+              {(selectedFile || selectedSpace) && (
                 <div className="mt-4 p-4 bg-gray-50 rounded-lg">
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-3">
-                      <FileText className="h-5 w-5 text-gray-500" />
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    {selectedSpace && (
                       <div>
-                        <p className="font-medium text-gray-900">{selectedFile.name}</p>
-                        <p className="text-sm text-gray-500">
-                          {(selectedFile.size / 1024 / 1024).toFixed(2)} MB
-                        </p>
+                        <p className="text-sm font-medium text-gray-700 mb-1">Target Space:</p>
+                        <div className="flex items-center gap-2">
+                          <div 
+                            className="w-3 h-3 rounded-full"
+                            style={{ backgroundColor: spaces.find(s => s.id === selectedSpace)?.color || '#6B7280' }}
+                          ></div>
+                          <span className="text-gray-900">
+                            {spaces.find(s => s.id === selectedSpace)?.name || 'Unknown Space'}
+                          </span>
+                        </div>
                       </div>
-                    </div>
+                    )}
+                    
+                    {selectedFile && (
+                      <div>
+                        <p className="text-sm font-medium text-gray-700 mb-1">Selected File:</p>
+                        <div className="flex items-center gap-2">
+                          <FileText className="h-4 w-4 text-gray-500" />
+                          <span className="text-gray-900">{selectedFile.name}</span>
+                          <span className="text-sm text-gray-500">
+                            ({(selectedFile.size / 1024 / 1024).toFixed(2)} MB)
+                          </span>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                  
+                  {selectedFile && selectedSpace && (
                     <button
                       onClick={handleFileUpload}
                       disabled={isUploading}
-                      className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 disabled:opacity-50 flex items-center gap-2"
+                      className="mt-4 w-full px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 disabled:opacity-50 flex items-center justify-center gap-2"
                     >
                       {isUploading ? <Loader className="animate-spin" size={16} /> : <Upload size={16} />}
-                      {isUploading ? 'Uploading...' : 'Upload'}
+                      {isUploading ? 'Uploading...' : 'Upload to Space'}
                     </button>
-                  </div>
+                  )}
                 </div>
               )}
 
@@ -725,67 +1162,6 @@ const SemanticSearchApp = () => {
           </div>
         )}
 
-        {/* Documents Tab */}
-        {activeTab === 'documents' && (
-          <div className="space-y-6">
-            <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
-              <div className="flex justify-between items-center mb-4">
-                <h2 className="text-lg font-semibold text-gray-900">Document Library</h2>
-                <span className="text-sm text-gray-500">{documents.length} documents</span>
-              </div>
-
-              {documents.length === 0 ? (
-                <div className="text-center py-8">
-                  <FileText className="mx-auto h-12 w-12 text-gray-400 mb-4" />
-                  <p className="text-gray-500">No documents uploaded yet</p>
-                  <button
-                    onClick={() => setActiveTab('upload')}
-                    className="mt-4 px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700"
-                  >
-                    Upload Your First Document
-                  </button>
-                </div>
-              ) : (
-                <div className="space-y-3">
-                  {documents.map(doc => (
-                    <div key={doc} className="flex items-center justify-between p-4 border border-gray-200 rounded-lg hover:bg-gray-50">
-                      <div className="flex items-center gap-3">
-                        <FileText className="h-5 w-5 text-gray-500" />
-                        <div>
-                          <p className="font-medium text-gray-900">{doc}</p>
-                          <p className="text-sm text-gray-500">
-                            {doc.split('.').pop().toUpperCase()} • Indexed
-                          </p>
-                        </div>
-                      </div>
-                      <div className="flex items-center gap-2">
-                        <button
-                          onClick={() => {
-                            setSelectedDocument(doc);
-                            setActiveTab('search');
-                            addNotification(`Focused search on: ${doc}`, 'info');
-                          }}
-                          className="p-2 text-gray-500 hover:text-indigo-600 hover:bg-indigo-50 rounded-lg"
-                          title="Search in this document"
-                        >
-                          <Eye size={16} />
-                        </button>
-                        <button
-                          onClick={() => handleDeleteDocument(doc)}
-                          className="p-2 text-gray-500 hover:text-red-600 hover:bg-red-50 rounded-lg"
-                          title="Delete document"
-                        >
-                          <Trash2 size={16} />
-                        </button>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-          </div>
-        )}
-
         {/* Analytics Tab */}
         {activeTab === 'analytics' && (
           <div className="space-y-6">
@@ -795,7 +1171,35 @@ const SemanticSearchApp = () => {
                 <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
                   <div className="flex items-center gap-3">
                     <div className="p-2 bg-blue-100 rounded-lg">
-                      <Database className="h-5 w-5 text-blue-600" />
+                      <Folder className="h-5 w-5 text-blue-600" />
+                    </div>
+                    <div>
+                      <p className="text-sm text-gray-600">Total Spaces</p>
+                      <p className="text-2xl font-bold text-gray-900">
+                        {stats.spaces_stats?.total_spaces || 0}
+                      </p>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
+                  <div className="flex items-center gap-3">
+                    <div className="p-2 bg-green-100 rounded-lg">
+                      <FileText className="h-5 w-5 text-green-600" />
+                    </div>
+                    <div>
+                      <p className="text-sm text-gray-600">Total Documents</p>
+                      <p className="text-2xl font-bold text-gray-900">
+                        {stats.spaces_stats?.total_documents || 0}
+                      </p>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
+                  <div className="flex items-center gap-3">
+                    <div className="p-2 bg-purple-100 rounded-lg">
+                      <Database className="h-5 w-5 text-purple-600" />
                     </div>
                     <div>
                       <p className="text-sm text-gray-600">Total Vectors</p>
@@ -808,42 +1212,57 @@ const SemanticSearchApp = () => {
 
                 <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
                   <div className="flex items-center gap-3">
-                    <div className="p-2 bg-green-100 rounded-lg">
-                      <FileText className="h-5 w-5 text-green-600" />
-                    </div>
-                    <div>
-                      <p className="text-sm text-gray-600">Documents</p>
-                      <p className="text-2xl font-bold text-gray-900">{documents.length}</p>
-                    </div>
-                  </div>
-                </div>
-
-                <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
-                  <div className="flex items-center gap-3">
-                    <div className="p-2 bg-purple-100 rounded-lg">
-                      <Brain className="h-5 w-5 text-purple-600" />
-                    </div>
-                    <div>
-                      <p className="text-sm text-gray-600">Embedding Dim</p>
-                      <p className="text-2xl font-bold text-gray-900">
-                        {stats.pinecone_stats?.embedding_dimension || 384}
-                      </p>
-                    </div>
-                  </div>
-                </div>
-
-                <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
-                  <div className="flex items-center gap-3">
                     <div className="p-2 bg-indigo-100 rounded-lg">
                       <Globe className="h-5 w-5 text-indigo-600" />
                     </div>
                     <div>
-                      <p className="text-sm text-gray-600">Index</p>
+                      <p className="text-sm text-gray-600">Storage Used</p>
                       <p className="text-lg font-bold text-gray-900">
-                        {stats.pinecone_stats?.index_name || 'N/A'}
+                        {stats.spaces_stats ? 
+                          `${(stats.spaces_stats.total_upload_size_bytes / 1024 / 1024).toFixed(1)}MB` :
+                          '0MB'
+                        }
                       </p>
                     </div>
                   </div>
+                </div>
+              </div>
+            )}
+
+            {/* Space Analytics */}
+            {stats?.spaces_stats?.spaces && (
+              <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
+                <h3 className="text-lg font-semibold text-gray-900 mb-4">Space Analytics</h3>
+                <div className="space-y-3">
+                  {stats.spaces_stats.spaces.map((space, index) => {
+                    const spaceInfo = spaces.find(s => s.id === space.space_id);
+                    return (
+                      <div key={index} className="flex items-center justify-between p-4 bg-gray-50 rounded-lg">
+                        <div className="flex items-center gap-3">
+                          <div 
+                            className="w-4 h-4 rounded-full"
+                            style={{ backgroundColor: spaceInfo?.color || '#6B7280' }}
+                          ></div>
+                          <span className="font-medium text-gray-900">
+                            {spaceInfo?.name || space.space_id}
+                          </span>
+                        </div>
+                        <div className="flex items-center gap-6 text-sm text-gray-600">
+                          <span>{space.document_count} docs</span>
+                          <span>{(space.size_bytes / 1024 / 1024).toFixed(1)}MB</span>
+                          <div className="w-32 bg-gray-200 rounded-full h-2">
+                            <div 
+                              className="h-2 rounded-full"
+                              style={{ 
+                                backgroundColor: spaceInfo?.color || '#6B7280',
+                                width: `${Math.min(100, (space.size_bytes / Math.max(...stats.spaces_stats.spaces.map(s => s.size_bytes))) * 100)}%`
+                              }}
+                            ></div>
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })}
                 </div>
               </div>
             )}
@@ -854,7 +1273,7 @@ const SemanticSearchApp = () => {
                 <h3 className="text-lg font-semibold text-gray-900 mb-4">System Health</h3>
                 <div className="space-y-3">
                   <div className="flex items-center justify-between">
-                    <span className="text-gray-600">Gemini API</span>
+                    <span className="text-gray-600">Gemini AI</span>
                     <span className={`px-2 py-1 rounded-full text-xs font-medium ${
                       health.components?.gemini_api_status === 'working' 
                         ? 'bg-green-100 text-green-800' 
@@ -864,7 +1283,7 @@ const SemanticSearchApp = () => {
                     </span>
                   </div>
                   <div className="flex items-center justify-between">
-                    <span className="text-gray-600">Pinecone</span>
+                    <span className="text-gray-600">Pinecone Vector DB</span>
                     <span className={`px-2 py-1 rounded-full text-xs font-medium ${
                       health.components?.pinecone_status === 'connected' 
                         ? 'bg-green-100 text-green-800' 
@@ -874,41 +1293,14 @@ const SemanticSearchApp = () => {
                     </span>
                   </div>
                   <div className="flex items-center justify-between">
-                    <span className="text-gray-600">Embedding Model</span>
-                    <span className="text-sm text-gray-500">
-                      {health.components?.embedding_model || 'N/A'}
+                    <span className="text-gray-600">Spaces System</span>
+                    <span className="px-2 py-1 bg-green-100 text-green-800 rounded-full text-xs font-medium">
+                      {health.components?.spaces_count || 0} spaces active
                     </span>
                   </div>
                 </div>
               </div>
             )}
-
-            {/* Advanced Analytics */}
-            <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
-              <h3 className="text-lg font-semibold text-gray-900 mb-4">Usage Analytics</h3>
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-                <div className="text-center">
-                  <div className="text-3xl font-bold text-indigo-600 mb-2">
-                    {searchResults ? '1' : '0'}
-                  </div>
-                  <p className="text-sm text-gray-600">Recent Searches</p>
-                </div>
-                <div className="text-center">
-                  <div className="text-3xl font-bold text-green-600 mb-2">
-                    {documents.length}
-                  </div>
-                  <p className="text-sm text-gray-600">Active Documents</p>
-                </div>
-                <div className="text-center">
-                  <div className="text-3xl font-bold text-purple-600 mb-2">
-                    {stats?.pinecone_stats?.total_vectors ? 
-                      Math.round(stats.pinecone_stats.total_vectors / Math.max(documents.length, 1)) : 
-                      0}
-                  </div>
-                  <p className="text-sm text-gray-600">Avg Chunks/Doc</p>
-                </div>
-              </div>
-            </div>
           </div>
         )}
       </main>

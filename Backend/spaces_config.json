@@ -1,0 +1,16 @@
+{
+  "49cb7eb6-a989-4cf3-97f6-4cf9a9fae0da": {
+    "name": "Box",
+    "description": "",
+    "color": "#3B82F6",
+    "created_at": "2025-07-09T03:01:35.877534",
+    "updated_at": "2025-07-09T03:01:35.877534"
+  },
+  "81c4d220-edb6-4549-b9c2-eaea6bb24c4f": {
+    "name": "Sample",
+    "description": "",
+    "color": "#EF4444",
+    "created_at": "2025-07-09T03:03:28.293753",
+    "updated_at": "2025-07-09T03:03:28.293753"
+  }
+}
