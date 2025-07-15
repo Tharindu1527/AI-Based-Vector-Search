@@ -1,25 +1,36 @@
-from fastapi import FastAPI, File, UploadFile, HTTPException, Query
+# Backend/app.py
+from fastapi import FastAPI, File, UploadFile, HTTPException, Query, Depends, status
 from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
+from datetime import datetime, timedelta
 import os
 import shutil
 from typing import List, Optional
+from bson import ObjectId
+import json
+
+# Import our modules
+from models import *
+from database import connect_to_mongo, close_mongo_connection, get_database
+from auth import (
+    get_password_hash, 
+    authenticate_user, 
+    create_access_token, 
+    get_current_active_user,
+    ACCESS_TOKEN_EXPIRE_MINUTES
+)
 from loader import DocumentLoader
 from search import EnhancedSemanticSearcher
 from dotenv import load_dotenv
-import json
-import uuid
-from datetime import datetime
 
 # Load environment variables
 load_dotenv()
 
 # Initialize FastAPI app
 app = FastAPI(
-    title="Semantic Search System with Spaces",
-    description="A semantic search system with spaces organization using Pinecone vector database and Google Gemini",
-    version="1.0.0"
+    title="Beecok - AI-Powered Semantic Search System",
+    description="A semantic search system with user authentication and spaces organization using MongoDB, Pinecone vector database and Google Gemini",
+    version="2.0.0"
 )
 
 app.add_middleware(
@@ -36,402 +47,590 @@ semantic_searcher = EnhancedSemanticSearcher()
 
 # Create necessary directories
 UPLOAD_DIR = "uploads"
-SPACES_DIR = "spaces"
-SPACES_CONFIG_FILE = "spaces_config.json"
-
 os.makedirs(UPLOAD_DIR, exist_ok=True)
-os.makedirs(SPACES_DIR, exist_ok=True)
 
 # Supported file extensions
 SUPPORTED_EXTENSIONS = ['.pdf', '.docx', '.pptx', '.txt']
 
-# Pydantic models
-class SpaceCreate(BaseModel):
-    name: str
-    description: Optional[str] = ""
-    color: Optional[str] = "#3B82F6"  # Default blue color
+# Startup and shutdown events
+@app.on_event("startup")
+async def startup_event():
+    await connect_to_mongo()
 
-class SpaceUpdate(BaseModel):
-    name: Optional[str] = None
-    description: Optional[str] = None
-    color: Optional[str] = None
-
-# Helper functions for spaces management
-def load_spaces_config():
-    """Load spaces configuration from JSON file"""
-    if os.path.exists(SPACES_CONFIG_FILE):
-        try:
-            with open(SPACES_CONFIG_FILE, 'r') as f:
-                return json.load(f)
-        except:
-            return {}
-    return {}
-
-def save_spaces_config(spaces_config):
-    """Save spaces configuration to JSON file"""
-    with open(SPACES_CONFIG_FILE, 'w') as f:
-        json.dump(spaces_config, f, indent=2)
-
-def get_space_upload_dir(space_id: str):
-    """Get the upload directory for a specific space"""
-    space_dir = os.path.join(SPACES_DIR, space_id)
-    os.makedirs(space_dir, exist_ok=True)
-    return space_dir
+@app.on_event("shutdown")
+async def shutdown_event():
+    await close_mongo_connection()
 
 # Root endpoint
 @app.get("/")
 async def root():
     """Root endpoint with API information"""
     return {
-        "message": "Semantic Search API with Spaces",
-        "version": "1.0.0",
-        "description": "Upload documents to spaces and perform semantic search using Pinecone and Google Gemini",
-        "endpoints": {
-            "spaces": "/spaces - Manage spaces",
-            "upload": "/spaces/{space_id}/upload - Upload documents to a space",
-            "search": "/search - Search through documents in selected spaces",
-            "health": "/health - Check system health",
-            "stats": "/stats - Get system statistics"
-        },
+        "message": "Beecok - AI-Powered Semantic Search API",
+        "version": "2.0.0",
+        "description": "Upload documents to spaces and perform semantic search using MongoDB, Pinecone and Google Gemini",
+        "features": ["User Authentication", "Document Spaces", "AI Chat", "Semantic Search"],
         "supported_formats": SUPPORTED_EXTENSIONS
+    }
+
+# Authentication endpoints
+@app.post("/auth/register", response_model=dict)
+async def register_user(user: UserCreate):
+    """Register a new user"""
+    db = get_database()
+    
+    # Check if user already exists
+    existing_user = await db.users.find_one({"email": user.email})
+    if existing_user:
+        raise HTTPException(
+            status_code=400,
+            detail="Email already registered"
+        )
+    
+    existing_username = await db.users.find_one({"username": user.username})
+    if existing_username:
+        raise HTTPException(
+            status_code=400,
+            detail="Username already taken"
+        )
+    
+    # Hash password and create user
+    hashed_password = get_password_hash(user.password)
+    user_doc = {
+        "username": user.username,
+        "email": user.email,
+        "password_hash": hashed_password,
+        "created_at": datetime.utcnow(),
+        "updated_at": datetime.utcnow()
+    }
+    
+    result = await db.users.insert_one(user_doc)
+    
+    # Create access token
+    access_token_expires = timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
+    access_token = create_access_token(
+        data={"sub": user.email}, expires_delta=access_token_expires
+    )
+    
+    return {
+        "message": "User registered successfully",
+        "access_token": access_token,
+        "token_type": "bearer",
+        "user": {
+            "id": str(result.inserted_id),
+            "username": user.username,
+            "email": user.email
+        }
+    }
+
+@app.post("/auth/login", response_model=dict)
+async def login_user(user_credentials: UserLogin):
+    """Login user"""
+    user = await authenticate_user(user_credentials.email, user_credentials.password)
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Incorrect email or password",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    
+    access_token_expires = timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
+    access_token = create_access_token(
+        data={"sub": user["email"]}, expires_delta=access_token_expires
+    )
+    
+    return {
+        "access_token": access_token,
+        "token_type": "bearer",
+        "user": {
+            "id": str(user["_id"]),
+            "username": user["username"],
+            "email": user["email"]
+        }
+    }
+
+@app.get("/auth/me", response_model=dict)
+async def read_users_me(current_user: dict = Depends(get_current_active_user)):
+    """Get current user information"""
+    return {
+        "id": str(current_user["_id"]),
+        "username": current_user["username"],
+        "email": current_user["email"],
+        "created_at": current_user["created_at"]
+    }
+
+# Chat endpoints
+@app.get("/chats")
+async def get_user_chats(current_user: dict = Depends(get_current_active_user)):
+    """Get user's chats"""
+    db = get_database()
+    chats = await db.chats.find(
+        {"user_id": ObjectId(current_user["_id"])}
+    ).sort("updated_at", -1).to_list(100)
+    
+    # Convert ObjectIds to strings
+    for chat in chats:
+        chat["id"] = str(chat["_id"])
+        chat["user_id"] = str(chat["user_id"])
+        del chat["_id"]
+    
+    return {"chats": chats}
+
+@app.post("/chats")
+async def create_chat(
+    chat: ChatCreate, 
+    current_user: dict = Depends(get_current_active_user)
+):
+    """Create a new chat"""
+    db = get_database()
+    
+    chat_doc = {
+        "user_id": ObjectId(current_user["_id"]),
+        "title": chat.title,
+        "created_at": datetime.utcnow(),
+        "updated_at": datetime.utcnow()
+    }
+    
+    result = await db.chats.insert_one(chat_doc)
+    
+    return {
+        "message": "Chat created successfully",
+        "chat": {
+            "id": str(result.inserted_id),
+            "title": chat.title,
+            "user_id": str(current_user["_id"]),
+            "created_at": chat_doc["created_at"],
+            "updated_at": chat_doc["updated_at"]
+        }
+    }
+
+@app.get("/chats/{chat_id}/messages")
+async def get_chat_messages(
+    chat_id: str, 
+    current_user: dict = Depends(get_current_active_user)
+):
+    """Get messages for a specific chat"""
+    db = get_database()
+    
+    # Verify chat belongs to user
+    chat = await db.chats.find_one({
+        "_id": ObjectId(chat_id),
+        "user_id": ObjectId(current_user["_id"])
+    })
+    if not chat:
+        raise HTTPException(status_code=404, detail="Chat not found")
+    
+    messages = await db.messages.find(
+        {"chat_id": ObjectId(chat_id)}
+    ).sort("timestamp", 1).to_list(1000)
+    
+    # Convert ObjectIds to strings
+    for message in messages:
+        message["id"] = str(message["_id"])
+        message["chat_id"] = str(message["chat_id"])
+        del message["_id"]
+    
+    return {"messages": messages}
+
+@app.post("/chats/{chat_id}/messages")
+async def send_message(
+    chat_id: str,
+    message: MessageBase,
+    current_user: dict = Depends(get_current_active_user)
+):
+    """Send a message in a chat"""
+    db = get_database()
+    
+    # Verify chat belongs to user
+    chat = await db.chats.find_one({
+        "_id": ObjectId(chat_id),
+        "user_id": ObjectId(current_user["_id"])
+    })
+    if not chat:
+        raise HTTPException(status_code=404, detail="Chat not found")
+    
+    # Save user message
+    user_message_doc = {
+        "chat_id": ObjectId(chat_id),
+        "sender": "user",
+        "content": message.content,
+        "timestamp": datetime.utcnow()
+    }
+    
+    user_result = await db.messages.insert_one(user_message_doc)
+    
+    # Process message with AI (if it's a search query)
+    ai_response = "I received your message. This is a placeholder response."
+    
+    # If message contains search intent, perform semantic search
+    if any(keyword in message.content.lower() for keyword in ['search', 'find', 'what', 'how', 'when', 'where']):
+        try:
+            # Get user's spaces for search context
+            user_spaces = await db.spaces.find({"user_id": ObjectId(current_user["_id"])}).to_list(100)
+            space_ids = [str(space["_id"]) for space in user_spaces]
+            
+            # Perform search if spaces exist
+            if space_ids:
+                search_results = semantic_searcher.search_documents_in_spaces(
+                    query=message.content,
+                    space_ids=space_ids,
+                    max_results=5
+                )
+                ai_response = search_results.get("answer", "I couldn't find relevant information in your documents.")
+            else:
+                ai_response = "You don't have any documents uploaded yet. Please upload some documents to your spaces first."
+        except Exception as e:
+            ai_response = f"I encountered an error while searching: {str(e)}"
+    
+    # Save AI response
+    ai_message_doc = {
+        "chat_id": ObjectId(chat_id),
+        "sender": "assistant",
+        "content": ai_response,
+        "timestamp": datetime.utcnow()
+    }
+    
+    ai_result = await db.messages.insert_one(ai_message_doc)
+    
+    # Update chat's updated_at timestamp
+    await db.chats.update_one(
+        {"_id": ObjectId(chat_id)},
+        {"$set": {"updated_at": datetime.utcnow()}}
+    )
+    
+    return {
+        "user_message": {
+            "id": str(user_result.inserted_id),
+            "content": message.content,
+            "sender": "user",
+            "timestamp": user_message_doc["timestamp"]
+        },
+        "ai_message": {
+            "id": str(ai_result.inserted_id),
+            "content": ai_response,
+            "sender": "assistant",
+            "timestamp": ai_message_doc["timestamp"]
+        }
     }
 
 # Spaces endpoints
 @app.get("/spaces")
-async def list_spaces():
-    """Get list of all spaces with document counts"""
-    try:
-        spaces_config = load_spaces_config()
-        spaces_with_stats = []
+async def list_user_spaces(current_user: dict = Depends(get_current_active_user)):
+    """Get user's spaces with document counts"""
+    db = get_database()
+    
+    spaces = await db.spaces.find(
+        {"user_id": ObjectId(current_user["_id"])}
+    ).sort("created_at", -1).to_list(100)
+    
+    spaces_with_stats = []
+    for space in spaces:
+        # Get document count for this space
+        doc_count = await db.documents.count_documents({"space_id": space["_id"]})
         
-        for space_id, space_info in spaces_config.items():
-            # Get document count for this space
-            space_documents = semantic_searcher.list_documents_by_space(space_id)
-            document_count = len(space_documents)
-            
-            # Get total file size
-            space_dir = get_space_upload_dir(space_id)
-            total_size = 0
-            if os.path.exists(space_dir):
-                for filename in os.listdir(space_dir):
-                    file_path = os.path.join(space_dir, filename)
-                    if os.path.isfile(file_path):
-                        total_size += os.path.getsize(file_path)
-            
-            space_with_stats = {
-                **space_info,
-                "id": space_id,
-                "document_count": document_count,
-                "total_size_bytes": total_size,
-                "documents": space_documents
-            }
-            spaces_with_stats.append(space_with_stats)
+        # Get total file size
+        pipeline = [
+            {"$match": {"space_id": space["_id"]}},
+            {"$group": {"_id": None, "total_size": {"$sum": "$size_in_bytes"}}}
+        ]
+        size_result = await db.documents.aggregate(pipeline).to_list(1)
+        total_size = size_result[0]["total_size"] if size_result else 0
         
-        return JSONResponse(
-            status_code=200,
-            content={
-                "spaces": spaces_with_stats,
-                "total_spaces": len(spaces_with_stats)
-            }
-        )
-    except Exception as e:
-        raise HTTPException(
-            status_code=500,
-            detail=f"Error listing spaces: {str(e)}"
-        )
+        space_with_stats = {
+            "id": str(space["_id"]),
+            "name": space["name"],
+            "description": space["description"],
+            "document_count": doc_count,
+            "total_size_bytes": total_size,
+            "created_at": space["created_at"],
+            "updated_at": space["updated_at"]
+        }
+        spaces_with_stats.append(space_with_stats)
+    
+    return {
+        "spaces": spaces_with_stats,
+        "total_spaces": len(spaces_with_stats)
+    }
 
 @app.post("/spaces")
-async def create_space(space: SpaceCreate):
+async def create_space(
+    space: SpaceCreate, 
+    current_user: dict = Depends(get_current_active_user)
+):
     """Create a new space"""
-    try:
-        spaces_config = load_spaces_config()
-        
-        # Check if space name already exists
-        for existing_space in spaces_config.values():
-            if existing_space.get("name", "").lower() == space.name.lower():
-                raise HTTPException(
-                    status_code=400,
-                    detail=f"Space with name '{space.name}' already exists"
-                )
-        
-        # Generate unique space ID
-        space_id = str(uuid.uuid4())
-        
-        # Create space configuration
-        space_config = {
+    db = get_database()
+    
+    # Check if space name already exists for this user
+    existing_space = await db.spaces.find_one({
+        "user_id": ObjectId(current_user["_id"]),
+        "name": space.name
+    })
+    if existing_space:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Space with name '{space.name}' already exists"
+        )
+    
+    space_doc = {
+        "user_id": ObjectId(current_user["_id"]),
+        "name": space.name,
+        "description": space.description,
+        "created_at": datetime.utcnow(),
+        "updated_at": datetime.utcnow()
+    }
+    
+    result = await db.spaces.insert_one(space_doc)
+    
+    return {
+        "message": f"Space '{space.name}' created successfully",
+        "space": {
+            "id": str(result.inserted_id),
             "name": space.name,
             "description": space.description,
-            "color": space.color,
-            "created_at": datetime.now().isoformat(),
-            "updated_at": datetime.now().isoformat()
+            "created_at": space_doc["created_at"],
+            "updated_at": space_doc["updated_at"]
         }
-        
-        # Add to spaces config
-        spaces_config[space_id] = space_config
-        save_spaces_config(spaces_config)
-        
-        # Create space directory
-        get_space_upload_dir(space_id)
-        
-        return JSONResponse(
-            status_code=201,
-            content={
-                "message": f"Space '{space.name}' created successfully",
-                "space_id": space_id,
-                "space": {**space_config, "id": space_id}
-            }
-        )
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(
-            status_code=500,
-            detail=f"Error creating space: {str(e)}"
-        )
+    }
 
 @app.get("/spaces/{space_id}")
-async def get_space(space_id: str):
+async def get_space(
+    space_id: str, 
+    current_user: dict = Depends(get_current_active_user)
+):
     """Get details of a specific space"""
-    try:
-        spaces_config = load_spaces_config()
-        
-        if space_id not in spaces_config:
-            raise HTTPException(
-                status_code=404,
-                detail=f"Space with ID '{space_id}' not found"
-            )
-        
-        space_info = spaces_config[space_id]
-        documents = semantic_searcher.list_documents_by_space(space_id)
-        
-        # Get file details
-        space_dir = get_space_upload_dir(space_id)
-        file_details = []
-        total_size = 0
-        
-        if os.path.exists(space_dir):
-            for filename in os.listdir(space_dir):
-                file_path = os.path.join(space_dir, filename)
-                if os.path.isfile(file_path):
-                    file_size = os.path.getsize(file_path)
-                    total_size += file_size
-                    file_details.append({
-                        "filename": filename,
-                        "size_bytes": file_size,
-                        "extension": os.path.splitext(filename)[1].lower(),
-                        "indexed": filename in documents
-                    })
-        
-        return JSONResponse(
-            status_code=200,
-            content={
-                **space_info,
-                "id": space_id,
-                "document_count": len(documents),
-                "total_size_bytes": total_size,
-                "documents": documents,
-                "file_details": file_details
-            }
-        )
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(
-            status_code=500,
-            detail=f"Error getting space: {str(e)}"
-        )
+    db = get_database()
+    
+    space = await db.spaces.find_one({
+        "_id": ObjectId(space_id),
+        "user_id": ObjectId(current_user["_id"])
+    })
+    if not space:
+        raise HTTPException(status_code=404, detail="Space not found")
+    
+    # Get documents in this space
+    documents = await db.documents.find(
+        {"space_id": ObjectId(space_id)}
+    ).sort("uploaded_at", -1).to_list(100)
+    
+    # Convert document ObjectIds to strings
+    doc_list = []
+    total_size = 0
+    for doc in documents:
+        doc_info = {
+            "id": str(doc["_id"]),
+            "original_file_name": doc["original_file_name"],
+            "file_type": doc["file_type"],
+            "size_in_bytes": doc["size_in_bytes"],
+            "uploaded_at": doc["uploaded_at"]
+        }
+        doc_list.append(doc_info)
+        total_size += doc["size_in_bytes"]
+    
+    return {
+        "id": str(space["_id"]),
+        "name": space["name"],
+        "description": space["description"],
+        "document_count": len(doc_list),
+        "total_size_bytes": total_size,
+        "documents": doc_list,
+        "created_at": space["created_at"],
+        "updated_at": space["updated_at"]
+    }
 
 @app.put("/spaces/{space_id}")
-async def update_space(space_id: str, space_update: SpaceUpdate):
+async def update_space(
+    space_id: str,
+    space_update: SpaceUpdate,
+    current_user: dict = Depends(get_current_active_user)
+):
     """Update space information"""
-    try:
-        spaces_config = load_spaces_config()
-        
-        if space_id not in spaces_config:
+    db = get_database()
+    
+    space = await db.spaces.find_one({
+        "_id": ObjectId(space_id),
+        "user_id": ObjectId(current_user["_id"])
+    })
+    if not space:
+        raise HTTPException(status_code=404, detail="Space not found")
+    
+    # Check if new name conflicts with existing spaces
+    if space_update.name and space_update.name != space["name"]:
+        existing_space = await db.spaces.find_one({
+            "user_id": ObjectId(current_user["_id"]),
+            "name": space_update.name,
+            "_id": {"$ne": ObjectId(space_id)}
+        })
+        if existing_space:
             raise HTTPException(
-                status_code=404,
-                detail=f"Space with ID '{space_id}' not found"
+                status_code=400,
+                detail=f"Space with name '{space_update.name}' already exists"
             )
-        
-        # Check if new name conflicts with existing spaces
-        if space_update.name:
-            for existing_id, existing_space in spaces_config.items():
-                if (existing_id != space_id and 
-                    existing_space.get("name", "").lower() == space_update.name.lower()):
-                    raise HTTPException(
-                        status_code=400,
-                        detail=f"Space with name '{space_update.name}' already exists"
-                    )
-        
-        # Update space configuration
-        space_config = spaces_config[space_id]
-        if space_update.name is not None:
-            space_config["name"] = space_update.name
-        if space_update.description is not None:
-            space_config["description"] = space_update.description
-        if space_update.color is not None:
-            space_config["color"] = space_update.color
-        
-        space_config["updated_at"] = datetime.now().isoformat()
-        
-        spaces_config[space_id] = space_config
-        save_spaces_config(spaces_config)
-        
-        return JSONResponse(
-            status_code=200,
-            content={
-                "message": f"Space updated successfully",
-                "space": {**space_config, "id": space_id}
-            }
-        )
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(
-            status_code=500,
-            detail=f"Error updating space: {str(e)}"
-        )
+    
+    # Update fields
+    update_data = {"updated_at": datetime.utcnow()}
+    if space_update.name is not None:
+        update_data["name"] = space_update.name
+    if space_update.description is not None:
+        update_data["description"] = space_update.description
+    
+    await db.spaces.update_one(
+        {"_id": ObjectId(space_id)},
+        {"$set": update_data}
+    )
+    
+    return {"message": "Space updated successfully"}
 
 @app.delete("/spaces/{space_id}")
-async def delete_space(space_id: str):
+async def delete_space(
+    space_id: str, 
+    current_user: dict = Depends(get_current_active_user)
+):
     """Delete a space and all its documents"""
-    try:
-        spaces_config = load_spaces_config()
-        
-        if space_id not in spaces_config:
-            raise HTTPException(
-                status_code=404,
-                detail=f"Space with ID '{space_id}' not found"
+    db = get_database()
+    
+    space = await db.spaces.find_one({
+        "_id": ObjectId(space_id),
+        "user_id": ObjectId(current_user["_id"])
+    })
+    if not space:
+        raise HTTPException(status_code=404, detail="Space not found")
+    
+    # Get documents to delete from vector index
+    documents = await db.documents.find({"space_id": ObjectId(space_id)}).to_list(1000)
+    
+    # Delete documents from vector index
+    for doc in documents:
+        try:
+            semantic_searcher.delete_document_from_space(
+                doc["original_file_name"], 
+                space_id
             )
-        
-        space_name = spaces_config[space_id].get("name", "Unknown")
-        
-        # Delete all documents from the index for this space
-        documents = semantic_searcher.list_documents_by_space(space_id)
-        for doc in documents:
-            semantic_searcher.delete_document_from_space(doc, space_id)
-        
-        # Delete space directory and files
-        space_dir = get_space_upload_dir(space_id)
-        if os.path.exists(space_dir):
-            shutil.rmtree(space_dir)
-        
-        # Remove from spaces config
-        del spaces_config[space_id]
-        save_spaces_config(spaces_config)
-        
-        return JSONResponse(
-            status_code=200,
-            content={
-                "message": f"Space '{space_name}' and all its documents deleted successfully",
-                "space_id": space_id,
-                "documents_deleted": len(documents)
-            }
-        )
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(
-            status_code=500,
-            detail=f"Error deleting space: {str(e)}"
-        )
+        except Exception as e:
+            print(f"Error deleting document from vector index: {e}")
+    
+    # Delete document files
+    for doc in documents:
+        try:
+            if os.path.exists(doc["file_path"]):
+                os.remove(doc["file_path"])
+        except Exception as e:
+            print(f"Error deleting file: {e}")
+    
+    # Delete documents from database
+    await db.documents.delete_many({"space_id": ObjectId(space_id)})
+    
+    # Delete space
+    await db.spaces.delete_one({"_id": ObjectId(space_id)})
+    
+    return {
+        "message": f"Space '{space['name']}' and all its documents deleted successfully",
+        "documents_deleted": len(documents)
+    }
 
-# Document upload to space
+# Document upload endpoint
 @app.post("/spaces/{space_id}/upload")
-async def upload_file_to_space(space_id: str, file: UploadFile = File(...)):
+async def upload_file_to_space(
+    space_id: str,
+    file: UploadFile = File(...),
+    current_user: dict = Depends(get_current_active_user)
+):
     """Upload and process documents for a specific space"""
+    db = get_database()
+    
+    # Check if space exists and belongs to user
+    space = await db.spaces.find_one({
+        "_id": ObjectId(space_id),
+        "user_id": ObjectId(current_user["_id"])
+    })
+    if not space:
+        raise HTTPException(status_code=404, detail="Space not found")
+    
+    # Validate file extension
+    file_extension = os.path.splitext(file.filename)[1].lower()
+    if file_extension not in SUPPORTED_EXTENSIONS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unsupported file type. Supported formats: {', '.join(SUPPORTED_EXTENSIONS)}"
+        )
+    
+    # Check file size (limit to 50MB)
+    file.file.seek(0, 2)
+    file_size = file.file.tell()
+    file.file.seek(0)
+    
+    if file_size > 50 * 1024 * 1024:
+        raise HTTPException(
+            status_code=400,
+            detail="File size too large. Maximum allowed size is 50MB."
+        )
+    
+    # Check if file already exists in this space
+    existing_doc = await db.documents.find_one({
+        "space_id": ObjectId(space_id),
+        "original_file_name": file.filename
+    })
+    if existing_doc:
+        raise HTTPException(
+            status_code=400,
+            detail=f"File '{file.filename}' already exists in this space."
+        )
+    
+    # Create user-specific upload directory
+    user_upload_dir = os.path.join(UPLOAD_DIR, str(current_user["_id"]), space_id)
+    os.makedirs(user_upload_dir, exist_ok=True)
+    
+    # Save uploaded file
+    file_path = os.path.join(user_upload_dir, file.filename)
+    
     try:
-        # Check if space exists
-        spaces_config = load_spaces_config()
-        if space_id not in spaces_config:
-            raise HTTPException(
-                status_code=404,
-                detail=f"Space with ID '{space_id}' not found"
-            )
-        
-        # Validate file extension
-        file_extension = os.path.splitext(file.filename)[1].lower()
-        if file_extension not in SUPPORTED_EXTENSIONS:
-            raise HTTPException(
-                status_code=400,
-                detail=f"Unsupported file type. Supported formats: {', '.join(SUPPORTED_EXTENSIONS)}"
-            )
-        
-        # Check file size (limit to 50MB)
-        file.file.seek(0, 2)
-        file_size = file.file.tell()
-        file.file.seek(0)
-        
-        if file_size > 50 * 1024 * 1024:
-            raise HTTPException(
-                status_code=400,
-                detail="File size too large. Maximum allowed size is 50MB."
-            )
-        
-        # Save uploaded file to space directory
-        space_dir = get_space_upload_dir(space_id)
-        file_path = os.path.join(space_dir, file.filename)
-        
-        # Check if file already exists in this space
-        if os.path.exists(file_path):
-            raise HTTPException(
-                status_code=400,
-                detail=f"File '{file.filename}' already exists in this space. Please rename the file or delete the existing one first."
-            )
-        
         with open(file_path, "wb") as buffer:
             shutil.copyfileobj(file.file, buffer)
         
         # Extract text from document
-        try:
-            extracted_text = document_loader.extract_text(file_path)
-            if not extracted_text.strip():
-                if os.path.exists(file_path):
-                    os.remove(file_path)
-                raise HTTPException(
-                    status_code=400,
-                    detail="No text could be extracted from the document"
-                )
-        except Exception as e:
-            if os.path.exists(file_path):
-                os.remove(file_path)
+        extracted_text = document_loader.extract_text(file_path)
+        if not extracted_text.strip():
+            os.remove(file_path)
             raise HTTPException(
                 status_code=400,
-                detail=f"Error extracting text: {str(e)}"
+                detail="No text could be extracted from the document"
             )
         
-        # Add document to Pinecone index with space information
-        try:
-            semantic_searcher.add_document_to_space(extracted_text, file.filename, space_id)
-        except Exception as e:
-            if os.path.exists(file_path):
-                os.remove(file_path)
-            raise HTTPException(
-                status_code=500,
-                detail=f"Error indexing document: {str(e)}"
-            )
+        # Add document to Pinecone index
+        semantic_searcher.add_document_to_space(extracted_text, file.filename, space_id)
         
-        space_name = spaces_config[space_id].get("name", "Unknown")
+        # Save document info to database
+        doc_doc = {
+            "space_id": ObjectId(space_id),
+            "user_id": ObjectId(current_user["_id"]),
+            "original_file_name": file.filename,
+            "file_type": file_extension.replace('.', ''),
+            "file_path": file_path,
+            "size_in_bytes": file_size,
+            "uploaded_at": datetime.utcnow()
+        }
         
-        return JSONResponse(
-            status_code=200,
-            content={
-                "message": f"File uploaded to space '{space_name}' successfully",
+        result = await db.documents.insert_one(doc_doc)
+        
+        return {
+            "message": f"File uploaded to space '{space['name']}' successfully",
+            "document": {
+                "id": str(result.inserted_id),
                 "filename": file.filename,
                 "space_id": space_id,
-                "space_name": space_name,
+                "space_name": space["name"],
                 "file_size_bytes": file_size,
                 "extracted_text_length": len(extracted_text),
                 "status": "indexed"
             }
-        )
+        }
         
-    except HTTPException:
-        raise
     except Exception as e:
+        # Clean up file if processing failed
+        if os.path.exists(file_path):
+            os.remove(file_path)
         raise HTTPException(
             status_code=500,
-            detail=f"Internal server error: {str(e)}"
+            detail=f"Error processing document: {str(e)}"
         )
 
 # Enhanced search with space selection
@@ -440,69 +639,74 @@ async def search_documents(
     q: str = Query(..., description="Search query"),
     space_ids: Optional[str] = Query(None, description="Comma-separated space IDs to search in"),
     filename: Optional[str] = Query(None, description="Filter by specific filename"),
-    max_results: Optional[int] = Query(10, description="Maximum number of results to return", ge=1, le=50)
+    max_results: Optional[int] = Query(10, description="Maximum number of results", ge=1, le=50),
+    current_user: dict = Depends(get_current_active_user)
 ):
-    """Enhanced search through documents in selected spaces"""
-    try:
-        if not q.strip():
+    """Enhanced search through documents in user's selected spaces"""
+    db = get_database()
+    
+    if not q.strip():
+        raise HTTPException(
+            status_code=400,
+            detail="Search query cannot be empty"
+        )
+    
+    # Parse and validate space IDs
+    selected_spaces = []
+    if space_ids:
+        selected_spaces = [s.strip() for s in space_ids.split(',') if s.strip()]
+        
+        # Verify all spaces belong to the user
+        for space_id in selected_spaces:
+            space = await db.spaces.find_one({
+                "_id": ObjectId(space_id),
+                "user_id": ObjectId(current_user["_id"])
+            })
+            if not space:
+                raise HTTPException(
+                    status_code=404,
+                    detail=f"Space '{space_id}' not found or access denied"
+                )
+    else:
+        # If no spaces specified, search in all user's spaces
+        user_spaces = await db.spaces.find(
+            {"user_id": ObjectId(current_user["_id"])}
+        ).to_list(100)
+        selected_spaces = [str(space["_id"]) for space in user_spaces]
+    
+    if not selected_spaces:
+        return {
+            "answer": "You don't have any spaces created yet. Please create a space and upload some documents first.",
+            "sources": [],
+            "query": q,
+            "total_results": 0,
+            "documents_searched": 0,
+            "spaces_searched": 0
+        }
+    
+    # Validate filename exists if provided
+    if filename:
+        doc_exists = await db.documents.find_one({
+            "space_id": {"$in": [ObjectId(sid) for sid in selected_spaces]},
+            "original_file_name": filename
+        })
+        if not doc_exists:
             raise HTTPException(
-                status_code=400,
-                detail="Search query cannot be empty"
+                status_code=404,
+                detail=f"Document '{filename}' not found in selected spaces"
             )
-        
-        # Parse space IDs
-        selected_spaces = []
-        if space_ids:
-            selected_spaces = [s.strip() for s in space_ids.split(',') if s.strip()]
-            
-            # Validate that all spaces exist
-            spaces_config = load_spaces_config()
-            for space_id in selected_spaces:
-                if space_id not in spaces_config:
-                    raise HTTPException(
-                        status_code=404,
-                        detail=f"Space '{space_id}' not found"
-                    )
-        
-        # Validate filename exists if provided
-        if filename:
-            if selected_spaces:
-                # Check if filename exists in any of the selected spaces
-                filename_found = False
-                for space_id in selected_spaces:
-                    documents = semantic_searcher.list_documents_by_space(space_id)
-                    if filename in documents:
-                        filename_found = True
-                        break
-                if not filename_found:
-                    raise HTTPException(
-                        status_code=404,
-                        detail=f"Document '{filename}' not found in selected spaces"
-                    )
-            else:
-                # Check if filename exists in any space
-                all_documents = semantic_searcher.list_documents()
-                if filename not in all_documents:
-                    raise HTTPException(
-                        status_code=404,
-                        detail=f"Document '{filename}' not found"
-                    )
-        
-        # Perform enhanced semantic search with space filtering
+    
+    try:
+        # Perform enhanced semantic search
         results = semantic_searcher.search_documents_in_spaces(
-            query=q, 
-            space_ids=selected_spaces, 
-            filename_filter=filename, 
+            query=q,
+            space_ids=selected_spaces,
+            filename_filter=filename,
             max_results=max_results
         )
         
-        return JSONResponse(
-            status_code=200,
-            content=results
-        )
+        return results
         
-    except HTTPException:
-        raise
     except Exception as e:
         raise HTTPException(
             status_code=500,
@@ -510,53 +714,52 @@ async def search_documents(
         )
 
 # Delete document from space
-@app.delete("/spaces/{space_id}/documents/{filename}")
-async def delete_document_from_space(space_id: str, filename: str):
+@app.delete("/spaces/{space_id}/documents/{document_id}")
+async def delete_document_from_space(
+    space_id: str,
+    document_id: str,
+    current_user: dict = Depends(get_current_active_user)
+):
     """Delete a specific document from a space"""
+    db = get_database()
+    
+    # Verify space belongs to user
+    space = await db.spaces.find_one({
+        "_id": ObjectId(space_id),
+        "user_id": ObjectId(current_user["_id"])
+    })
+    if not space:
+        raise HTTPException(status_code=404, detail="Space not found")
+    
+    # Find document
+    document = await db.documents.find_one({
+        "_id": ObjectId(document_id),
+        "space_id": ObjectId(space_id),
+        "user_id": ObjectId(current_user["_id"])
+    })
+    if not document:
+        raise HTTPException(status_code=404, detail="Document not found")
+    
     try:
-        # Check if space exists
-        spaces_config = load_spaces_config()
-        if space_id not in spaces_config:
-            raise HTTPException(
-                status_code=404,
-                detail=f"Space with ID '{space_id}' not found"
-            )
-        
-        # Check if document exists in space
-        documents = semantic_searcher.list_documents_by_space(space_id)
-        if filename not in documents:
-            raise HTTPException(
-                status_code=404,
-                detail=f"Document '{filename}' not found in this space"
-            )
-        
         # Delete from Pinecone index
-        semantic_searcher.delete_document_from_space(filename, space_id)
-        
-        # Delete uploaded file if it exists
-        space_dir = get_space_upload_dir(space_id)
-        file_path = os.path.join(space_dir, filename)
-        file_deleted = False
-        if os.path.exists(file_path):
-            os.remove(file_path)
-            file_deleted = True
-        
-        space_name = spaces_config[space_id].get("name", "Unknown")
-        
-        return JSONResponse(
-            status_code=200,
-            content={
-                "message": f"Document '{filename}' deleted from space '{space_name}' successfully",
-                "filename": filename,
-                "space_id": space_id,
-                "space_name": space_name,
-                "file_deleted": file_deleted,
-                "index_deleted": True
-            }
+        semantic_searcher.delete_document_from_space(
+            document["original_file_name"], 
+            space_id
         )
         
-    except HTTPException:
-        raise
+        # Delete file from disk
+        if os.path.exists(document["file_path"]):
+            os.remove(document["file_path"])
+        
+        # Delete from database
+        await db.documents.delete_one({"_id": ObjectId(document_id)})
+        
+        return {
+            "message": f"Document '{document['original_file_name']}' deleted successfully",
+            "filename": document["original_file_name"],
+            "space_id": space_id
+        }
+        
     except Exception as e:
         raise HTTPException(
             status_code=500,
@@ -567,97 +770,79 @@ async def delete_document_from_space(space_id: str, filename: str):
 async def health_check():
     """Check system health and component status"""
     try:
-        health_status = semantic_searcher.health_check()
-        
-        # Check spaces directory
-        spaces_dir_status = "exists" if os.path.exists(SPACES_DIR) else "missing"
-        
-        # Check spaces config
-        spaces_config = load_spaces_config()
-        spaces_count = len(spaces_config)
-        
-        # Overall health determination
-        overall_health = "healthy"
-        if "error" in health_status.get('gemini_api_status', ''):
-            overall_health = "degraded"
-        if "error" in health_status.get('pinecone_status', ''):
-            overall_health = "unhealthy"
-        
-        return JSONResponse(
-            status_code=200 if overall_health == "healthy" else 503,
-            content={
-                "status": overall_health,
-                "components": {
-                    **health_status,
-                    "spaces_directory": spaces_dir_status,
-                    "spaces_count": spaces_count
-                },
-                "timestamp": datetime.now().isoformat()
-            }
-        )
+        # Test database connection
+        db = get_database()
+        await db.command("ping")
+        db_status = "connected"
     except Exception as e:
-        return JSONResponse(
-            status_code=503,
-            content={
-                "status": "unhealthy",
-                "error": str(e),
-                "timestamp": datetime.now().isoformat()
-            }
-        )
+        db_status = f"error: {str(e)}"
+    
+    # Test semantic searcher
+    try:
+        health_status = semantic_searcher.health_check()
+    except Exception as e:
+        health_status = {"error": str(e)}
+    
+    # Overall health determination
+    overall_health = "healthy"
+    if "error" in health_status.get('gemini_api_status', ''):
+        overall_health = "degraded"
+    if "error" in health_status.get('pinecone_status', '') or "error" in db_status:
+        overall_health = "unhealthy"
+    
+    return {
+        "status": overall_health,
+        "components": {
+            **health_status,
+            "mongodb_status": db_status,
+            "authentication": "enabled"
+        },
+        "timestamp": datetime.utcnow()
+    }
 
 @app.get("/stats")
-async def get_stats():
-    """Get statistics about the system including spaces"""
+async def get_stats(current_user: dict = Depends(get_current_active_user)):
+    """Get statistics about the user's system usage"""
+    db = get_database()
+    
     try:
-        stats = semantic_searcher.get_index_stats()
-        spaces_config = load_spaces_config()
-        
-        # Calculate space statistics
-        space_stats = []
-        total_documents = 0
-        total_upload_size = 0
-        
-        for space_id, space_info in spaces_config.items():
-            documents = semantic_searcher.list_documents_by_space(space_id)
-            space_dir = get_space_upload_dir(space_id)
-            
-            space_size = 0
-            file_count = 0
-            if os.path.exists(space_dir):
-                for filename in os.listdir(space_dir):
-                    file_path = os.path.join(space_dir, filename)
-                    if os.path.isfile(file_path):
-                        space_size += os.path.getsize(file_path)
-                        file_count += 1
-            
-            space_stat = {
-                "space_id": space_id,
-                "name": space_info.get("name", "Unknown"),
-                "document_count": len(documents),
-                "file_count": file_count,
-                "size_bytes": space_size
-            }
-            space_stats.append(space_stat)
-            total_documents += len(documents)
-            total_upload_size += space_size
-        
-        return JSONResponse(
-            status_code=200,
-            content={
-                "pinecone_stats": stats,
-                "spaces_stats": {
-                    "total_spaces": len(spaces_config),
-                    "total_documents": total_documents,
-                    "total_upload_size_bytes": total_upload_size,
-                    "spaces": space_stats
-                },
-                "system_info": {
-                    "supported_formats": SUPPORTED_EXTENSIONS,
-                    "max_file_size_mb": 50,
-                    "spaces_directory": SPACES_DIR
-                }
-            }
+        # Get user's stats
+        user_spaces_count = await db.spaces.count_documents(
+            {"user_id": ObjectId(current_user["_id"])}
         )
+        
+        user_documents_count = await db.documents.count_documents(
+            {"user_id": ObjectId(current_user["_id"])}
+        )
+        
+        user_chats_count = await db.chats.count_documents(
+            {"user_id": ObjectId(current_user["_id"])}
+        )
+        
+        # Get total storage used by user
+        pipeline = [
+            {"$match": {"user_id": ObjectId(current_user["_id"])}},
+            {"$group": {"_id": None, "total_size": {"$sum": "$size_in_bytes"}}}
+        ]
+        size_result = await db.documents.aggregate(pipeline).to_list(1)
+        total_storage = size_result[0]["total_size"] if size_result else 0
+        
+        # Get Pinecone stats
+        index_stats = semantic_searcher.get_index_stats()
+        
+        return {
+            "user_stats": {
+                "spaces_count": user_spaces_count,
+                "documents_count": user_documents_count,
+                "chats_count": user_chats_count,
+                "total_storage_bytes": total_storage
+            },
+            "pinecone_stats": index_stats,
+            "system_info": {
+                "supported_formats": SUPPORTED_EXTENSIONS,
+                "max_file_size_mb": 50
+            }
+        }
         
     except Exception as e:
         raise HTTPException(
@@ -672,9 +857,10 @@ if __name__ == "__main__":
     port = int(os.getenv("PORT", 8000))
     debug = os.getenv("DEBUG", "False").lower() == "true"
     
-    print(f"🚀 Starting Semantic Search API with Spaces")
+    print(f"🚀 Starting Beecok API v2.0")
     print(f"📍 Server will run on: http://{host}:{port}")
     print(f"📚 API Documentation: http://{host}:{port}/docs")
     print(f"🔍 Health Check: http://{host}:{port}/health")
+    print(f"🔐 Authentication: Enabled")
     
     uvicorn.run(app, host=host, port=port, reload=debug, log_level="info")

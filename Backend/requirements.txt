@@ -14,5 +14,9 @@ python-multipart
 numpy
 pandas
 torch
-sqlite3
-SQLAlchemy
+pymongo
+motor
+passlib[bcrypt]
+python-jose[cryptography]
+python-decouple
+datetime
