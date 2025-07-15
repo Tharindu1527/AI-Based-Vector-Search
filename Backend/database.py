@@ -1,44 +1,88 @@
-# Backend/database.py
 import os
+import asyncio
 from motor.motor_asyncio import AsyncIOMotorClient
-from decouple import config
+from dotenv import load_dotenv
+from typing import Optional
 
-# MongoDB connection settings
-MONGODB_URL = config("MONGODB_URL", default="mongodb://localhost:27017")
-DATABASE_NAME = config("DATABASE_NAME", default="Beecok")
+# Load environment variables explicitly
+load_dotenv()
+
+# MongoDB connection settings - handle special characters in password
+MONGODB_URL = os.getenv("MONGODB_URL", "mongodb://localhost:27017")
+DATABASE_NAME = os.getenv("DATABASE_NAME", "Beecok")
 
 class Database:
-    client: AsyncIOMotorClient = None
+    client: Optional[AsyncIOMotorClient] = None
     database = None
+    connected = False
 
 # Global database instance
 db = Database()
 
 async def connect_to_mongo():
-    """Create database connection"""
-    try:
-        db.client = AsyncIOMotorClient(MONGODB_URL)
-        db.database = db.client[DATABASE_NAME]
-        
-        # Test the connection
-        await db.client.admin.command('ismaster')
-        print(f"Connected to MongoDB: {DATABASE_NAME}")
-        
-        # Create indexes for better performance
-        await create_indexes()
-        
-    except Exception as e:
-        print(f"Error connecting to MongoDB: {e}")
-        raise
+    """Create database connection with retry logic"""
+    max_retries = 3
+    retry_delay = 2  # seconds
+    
+    for attempt in range(max_retries):
+        try:
+            print(f"Attempting to connect to MongoDB (attempt {attempt + 1}/{max_retries})...")
+            print(f"Connection URL: {MONGODB_URL[:50]}...")  # Print first 50 chars for debugging
+            
+            # Create client with timeout settings
+            db.client = AsyncIOMotorClient(
+                MONGODB_URL,
+                serverSelectionTimeoutMS=10000,  # 10 second timeout
+                connectTimeoutMS=10000,
+                socketTimeoutMS=10000,
+                maxPoolSize=10,
+                minPoolSize=1
+            )
+            
+            # Test the connection
+            await db.client.admin.command('ping')
+            
+            # Set database
+            db.database = db.client[DATABASE_NAME]
+            db.connected = True
+            
+            print(f"✅ Connected to MongoDB: {DATABASE_NAME}")
+            
+            # Create indexes for better performance
+            await create_indexes()
+            
+            return True
+            
+        except Exception as e:
+            print(f"❌ MongoDB connection attempt {attempt + 1} failed: {e}")
+            
+            if attempt < max_retries - 1:
+                print(f"Retrying in {retry_delay} seconds...")
+                await asyncio.sleep(retry_delay)
+            else:
+                print("❌ All MongoDB connection attempts failed!")
+                print("\n🔧 SOLUTIONS:")
+                print("1. Check your .env file format")
+                print("2. Verify special characters in password are URL encoded")
+                print("3. Check MongoDB Atlas connection string")
+                print("4. Verify network access and IP whitelist")
+                print("\nThe application will continue with limited functionality...")
+                
+                db.connected = False
+                return False
 
 async def close_mongo_connection():
     """Close database connection"""
     if db.client:
         db.client.close()
+        db.connected = False
         print("Disconnected from MongoDB")
 
 async def create_indexes():
     """Create database indexes"""
+    if not db.connected or not db.database:
+        return
+        
     try:
         # Users collection indexes
         await db.database.users.create_index("email", unique=True)
@@ -57,11 +101,117 @@ async def create_indexes():
         await db.database.documents.create_index([("space_id", 1), ("uploaded_at", -1)])
         await db.database.documents.create_index([("user_id", 1), ("uploaded_at", -1)])
         
-        print("Database indexes created successfully")
+        print("✅ Database indexes created successfully")
         
     except Exception as e:
-        print(f"Error creating indexes: {e}")
+        print(f"⚠️  Error creating indexes: {e}")
 
 def get_database():
     """Get database instance"""
-    return db.database
+    return db.database if db.connected else None
+
+def is_connected():
+    """Check if database is connected"""
+    return db.connected
+
+# Mock database for development when MongoDB is not available
+class MockCollection:
+    def __init__(self):
+        self.data = []
+    
+    async def find_one(self, query):
+        for item in self.data:
+            if self._match_query(item, query):
+                return item
+        return None
+    
+    async def find(self, query=None):
+        class MockCursor:
+            def __init__(self, data, query):
+                self.data = data
+                self.query = query or {}
+            
+            def sort(self, *args):
+                return self
+            
+            async def to_list(self, limit=None):
+                results = []
+                for item in self.data:
+                    if self._match_query(item, self.query):
+                        results.append(item)
+                return results[:limit] if limit else results
+            
+            def _match_query(self, item, query):
+                for key, value in query.items():
+                    if key not in item or item[key] != value:
+                        return False
+                return True
+        
+        return MockCursor(self.data, query)
+    
+    async def insert_one(self, document):
+        from bson import ObjectId
+        document['_id'] = ObjectId()
+        self.data.append(document)
+        return type('Result', (), {'inserted_id': document['_id']})()
+    
+    async def update_one(self, query, update):
+        for item in self.data:
+            if self._match_query(item, query):
+                if '$set' in update:
+                    item.update(update['$set'])
+                return type('Result', (), {'modified_count': 1})()
+        return type('Result', (), {'modified_count': 0})()
+    
+    async def delete_one(self, query):
+        for i, item in enumerate(self.data):
+            if self._match_query(item, query):
+                self.data.pop(i)
+                return type('Result', (), {'deleted_count': 1})()
+        return type('Result', (), {'deleted_count': 0})()
+    
+    async def delete_many(self, query):
+        deleted = 0
+        self.data = [item for item in self.data if not self._match_query(item, query)]
+        return type('Result', (), {'deleted_count': deleted})()
+    
+    async def count_documents(self, query):
+        count = 0
+        for item in self.data:
+            if self._match_query(item, query):
+                count += 1
+        return count
+    
+    def aggregate(self, pipeline):
+        class MockAggregate:
+            async def to_list(self, limit=None):
+                return []
+        return MockAggregate()
+    
+    async def create_index(self, *args, **kwargs):
+        pass  # Mock index creation
+    
+    def _match_query(self, item, query):
+        for key, value in query.items():
+            if key not in item or item[key] != value:
+                return False
+        return True
+
+class MockDatabase:
+    def __init__(self):
+        self.users = MockCollection()
+        self.chats = MockCollection()
+        self.messages = MockCollection()
+        self.spaces = MockCollection()
+        self.documents = MockCollection()
+    
+    async def command(self, command):
+        return {"ok": 1}
+
+def get_database_with_fallback():
+    """Get database instance with fallback to mock database"""
+    if db.connected and db.database:
+        return db.database
+    else:
+        print("⚠️  Using mock database (MongoDB not connected)")
+        return MockDatabase()
