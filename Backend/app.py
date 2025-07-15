@@ -76,52 +76,79 @@ async def root():
 # Authentication endpoints
 @app.post("/auth/register", response_model=dict)
 async def register_user(user: UserCreate):
-    """Register a new user"""
+    """Register a new user with enhanced error handling"""
+    
+    # Get database with fallback
     db = get_database()
+    if db is None:
+        print("Database connection failed, attempting to reconnect...")
+        success = await connect_to_mongo()
+        if not success:
+            raise HTTPException(
+                status_code=503,
+                detail="Database service unavailable. Please try again later."
+            )
+        db = get_database()
+        if db is None:
+            raise HTTPException(
+                status_code=503,
+                detail="Unable to establish database connection"
+            )
     
-    # Check if user already exists
-    existing_user = await db.users.find_one({"email": user.email})
-    if existing_user:
-        raise HTTPException(
-            status_code=400,
-            detail="Email already registered"
-        )
-    
-    existing_username = await db.users.find_one({"username": user.username})
-    if existing_username:
-        raise HTTPException(
-            status_code=400,
-            detail="Username already taken"
-        )
-    
-    # Hash password and create user
-    hashed_password = get_password_hash(user.password)
-    user_doc = {
-        "username": user.username,
-        "email": user.email,
-        "password_hash": hashed_password,
-        "created_at": datetime.utcnow(),
-        "updated_at": datetime.utcnow()
-    }
-    
-    result = await db.users.insert_one(user_doc)
-    
-    # Create access token
-    access_token_expires = timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
-    access_token = create_access_token(
-        data={"sub": user.email}, expires_delta=access_token_expires
-    )
-    
-    return {
-        "message": "User registered successfully",
-        "access_token": access_token,
-        "token_type": "bearer",
-        "user": {
-            "id": str(result.inserted_id),
+    try:
+        # Check if user already exists
+        existing_user = await db.users.find_one({"email": user.email})
+        if existing_user:
+            raise HTTPException(
+                status_code=400,
+                detail="Email already registered"
+            )
+        
+        existing_username = await db.users.find_one({"username": user.username})
+        if existing_username:
+            raise HTTPException(
+                status_code=400,
+                detail="Username already taken"
+            )
+        
+        # Hash password and create user
+        hashed_password = get_password_hash(user.password)
+        user_doc = {
             "username": user.username,
-            "email": user.email
+            "email": user.email,
+            "password_hash": hashed_password,
+            "created_at": datetime.utcnow(),
+            "updated_at": datetime.utcnow()
         }
-    }
+        
+        result = await db.users.insert_one(user_doc)
+        
+        # Create access token
+        access_token_expires = timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
+        access_token = create_access_token(
+            data={"sub": user.email}, expires_delta=access_token_expires
+        )
+        
+        return {
+            "message": "User registered successfully",
+            "access_token": access_token,
+            "token_type": "bearer",
+            "user": {
+                "id": str(result.inserted_id),
+                "username": user.username,
+                "email": user.email
+            }
+        }
+        
+    except HTTPException:
+        # Re-raise HTTP exceptions
+        raise
+    except Exception as e:
+        print(f"Registration error: {e}")
+        raise HTTPException(
+            status_code=500,
+            detail="Registration failed due to server error"
+        )
 
 @app.post("/auth/login", response_model=dict)
 async def login_user(user_credentials: UserLogin):

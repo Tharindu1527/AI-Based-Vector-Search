@@ -8,8 +8,8 @@ from typing import Optional
 load_dotenv()
 
 # MongoDB connection settings - handle special characters in password
-MONGODB_URL = os.getenv("MONGODB_URL", "mongodb://localhost:27017")
-DATABASE_NAME = os.getenv("DATABASE_NAME", "Beecok")
+MONGODB_URL = os.getenv('MONGODB_URL')
+DATABASE_NAME = os.getenv("DATABASE_NAME")
 
 class Database:
     client: Optional[AsyncIOMotorClient] = None
@@ -107,19 +107,33 @@ async def create_indexes():
         print(f"⚠️  Error creating indexes: {e}")
 
 def get_database():
-    """Get database instance"""
-    return db.database if db.connected else None
+    """Get database instance with better error handling"""
+    if not db.connected or not db.database:
+        print("⚠️  Database not connected. Using fallback.")
+        return None
+    return db.database
 
 def is_connected():
     """Check if database is connected"""
     return db.connected
 
+# Enhanced database getter with fallback
+def get_database_with_fallback():
+    """Get database instance with fallback to mock database"""
+    if db.connected and db.database:
+        return db.database
+    else:
+        print("⚠️  Using mock database (MongoDB not connected)")
+        return MockDatabase()
+
 # Mock database for development when MongoDB is not available
 class MockCollection:
     def __init__(self):
         self.data = []
+        self._id_counter = 1
     
     async def find_one(self, query):
+        print(f"Mock DB: Finding one with query: {query}")
         for item in self.data:
             if self._match_query(item, query):
                 return item
@@ -153,6 +167,7 @@ class MockCollection:
         from bson import ObjectId
         document['_id'] = ObjectId()
         self.data.append(document)
+        print(f"Mock DB: Inserted document with ID: {document['_id']}")
         return type('Result', (), {'inserted_id': document['_id']})()
     
     async def update_one(self, query, update):
@@ -160,6 +175,7 @@ class MockCollection:
             if self._match_query(item, query):
                 if '$set' in update:
                     item.update(update['$set'])
+                print(f"Mock DB: Updated document")
                 return type('Result', (), {'modified_count': 1})()
         return type('Result', (), {'modified_count': 0})()
     
@@ -171,8 +187,9 @@ class MockCollection:
         return type('Result', (), {'deleted_count': 0})()
     
     async def delete_many(self, query):
-        deleted = 0
+        original_length = len(self.data)
         self.data = [item for item in self.data if not self._match_query(item, query)]
+        deleted = original_length - len(self.data)
         return type('Result', (), {'deleted_count': deleted})()
     
     async def count_documents(self, query):
@@ -189,6 +206,7 @@ class MockCollection:
         return MockAggregate()
     
     async def create_index(self, *args, **kwargs):
+        print(f"Mock DB: Creating index with args: {args}")
         pass  # Mock index creation
     
     def _match_query(self, item, query):
@@ -204,14 +222,8 @@ class MockDatabase:
         self.messages = MockCollection()
         self.spaces = MockCollection()
         self.documents = MockCollection()
+        print("Mock database initialized")
     
     async def command(self, command):
+        print(f"Mock DB: Executing command: {command}")
         return {"ok": 1}
-
-def get_database_with_fallback():
-    """Get database instance with fallback to mock database"""
-    if db.connected and db.database:
-        return db.database
-    else:
-        print("⚠️  Using mock database (MongoDB not connected)")
-        return MockDatabase()
