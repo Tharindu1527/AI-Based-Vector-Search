@@ -4,12 +4,20 @@ from motor.motor_asyncio import AsyncIOMotorClient
 from dotenv import load_dotenv
 from typing import Optional
 
-# Load environment variables explicitly
-load_dotenv()
+# Load environment variables explicitly with override
+load_dotenv(override=True)
 
 # MongoDB connection settings - handle special characters in password
 MONGODB_URL = os.getenv('MONGODB_URL')
 DATABASE_NAME = os.getenv("DATABASE_NAME")
+
+# Add debugging
+print("=" * 50)
+print("ENVIRONMENT VARIABLES DEBUG:")
+print(f"MONGODB_URL: {MONGODB_URL}")
+print(f"DATABASE_NAME: {DATABASE_NAME}")
+print(f"Environment loaded from: {os.path.abspath('.env') if os.path.exists('.env') else 'No .env file found'}")
+print("=" * 50)
 
 class Database:
     client: Optional[AsyncIOMotorClient] = None
@@ -24,10 +32,15 @@ async def connect_to_mongo():
     max_retries = 3
     retry_delay = 2  # seconds
     
+    if not MONGODB_URL:
+        print("❌ MONGODB_URL is not set in environment variables!")
+        return False
+    
     for attempt in range(max_retries):
         try:
             print(f"Attempting to connect to MongoDB (attempt {attempt + 1}/{max_retries})...")
-            print(f"Connection URL: {MONGODB_URL[:50]}...")  # Print first 50 chars for debugging
+            # Show first 80 chars for debugging without exposing full credentials
+            print(f"Connection URL: {MONGODB_URL[:80]}...")
             
             # Create client with timeout settings
             db.client = AsyncIOMotorClient(
@@ -66,6 +79,7 @@ async def connect_to_mongo():
                 print("2. Verify special characters in password are URL encoded")
                 print("3. Check MongoDB Atlas connection string")
                 print("4. Verify network access and IP whitelist")
+                print("5. Make sure .env file is in the Backend directory")
                 print("\nThe application will continue with limited functionality...")
                 
                 db.connected = False
@@ -80,7 +94,7 @@ async def close_mongo_connection():
 
 async def create_indexes():
     """Create database indexes"""
-    if not db.connected or not db.database:
+    if not db.connected or db.database is None:
         return
         
     try:
@@ -108,7 +122,7 @@ async def create_indexes():
 
 def get_database():
     """Get database instance with better error handling"""
-    if not db.connected or not db.database:
+    if not db.connected or db.database is None:
         print("⚠️  Database not connected. Using fallback.")
         return None
     return db.database
@@ -120,7 +134,7 @@ def is_connected():
 # Enhanced database getter with fallback
 def get_database_with_fallback():
     """Get database instance with fallback to mock database"""
-    if db.connected and db.database:
+    if db.connected and db.database is not None:
         return db.database
     else:
         print("⚠️  Using mock database (MongoDB not connected)")
