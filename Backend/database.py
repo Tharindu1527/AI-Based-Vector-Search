@@ -1,3 +1,4 @@
+# Backend/database.py - Fixed version with better error handling
 import os
 import asyncio
 from motor.motor_asyncio import AsyncIOMotorClient
@@ -9,12 +10,12 @@ load_dotenv(override=True)
 
 # MongoDB connection settings - handle special characters in password
 MONGODB_URL = os.getenv('MONGODB_URL')
-DATABASE_NAME = os.getenv("DATABASE_NAME")
+DATABASE_NAME = os.getenv("DATABASE_NAME", "Beecok")
 
 # Add debugging
 print("=" * 50)
 print("ENVIRONMENT VARIABLES DEBUG:")
-print(f"MONGODB_URL: {MONGODB_URL}")
+print(f"MONGODB_URL: {'Set' if MONGODB_URL else 'Not Set'}")
 print(f"DATABASE_NAME: {DATABASE_NAME}")
 print(f"Environment loaded from: {os.path.abspath('.env') if os.path.exists('.env') else 'No .env file found'}")
 print("=" * 50)
@@ -29,18 +30,19 @@ db = Database()
 
 async def connect_to_mongo():
     """Create database connection with retry logic"""
+    if not MONGODB_URL:
+        print("⚠️  MONGODB_URL is not set. Using mock database for development.")
+        print("🔧 To use MongoDB, set MONGODB_URL in your .env file")
+        db.connected = False
+        db.database = MockDatabase()
+        return True
+    
     max_retries = 3
     retry_delay = 2  # seconds
-    
-    if not MONGODB_URL:
-        print("❌ MONGODB_URL is not set in environment variables!")
-        return False
     
     for attempt in range(max_retries):
         try:
             print(f"Attempting to connect to MongoDB (attempt {attempt + 1}/{max_retries})...")
-            # Show first 80 chars for debugging without exposing full credentials
-            print(f"Connection URL: {MONGODB_URL[:80]}...")
             
             # Create client with timeout settings
             db.client = AsyncIOMotorClient(
@@ -74,16 +76,12 @@ async def connect_to_mongo():
                 await asyncio.sleep(retry_delay)
             else:
                 print("❌ All MongoDB connection attempts failed!")
-                print("\n🔧 SOLUTIONS:")
-                print("1. Check your .env file format")
-                print("2. Verify special characters in password are URL encoded")
-                print("3. Check MongoDB Atlas connection string")
-                print("4. Verify network access and IP whitelist")
-                print("5. Make sure .env file is in the Backend directory")
-                print("\nThe application will continue with limited functionality...")
+                print("🔧 Using mock database for development")
+                print("💡 To fix this, check your MONGODB_URL in .env file")
                 
                 db.connected = False
-                return False
+                db.database = MockDatabase()
+                return True
 
 async def close_mongo_connection():
     """Close database connection"""
@@ -122,23 +120,14 @@ async def create_indexes():
 
 def get_database():
     """Get database instance with better error handling"""
-    if not db.connected or db.database is None:
-        print("⚠️  Database not connected. Using fallback.")
-        return None
+    if db.database is None:
+        print("⚠️  Database not initialized. Using mock database.")
+        return MockDatabase()
     return db.database
 
 def is_connected():
     """Check if database is connected"""
     return db.connected
-
-# Enhanced database getter with fallback
-def get_database_with_fallback():
-    """Get database instance with fallback to mock database"""
-    if db.connected and db.database is not None:
-        return db.database
-    else:
-        print("⚠️  Using mock database (MongoDB not connected)")
-        return MockDatabase()
 
 # Mock database for development when MongoDB is not available
 class MockCollection:
@@ -147,13 +136,12 @@ class MockCollection:
         self._id_counter = 1
     
     async def find_one(self, query):
-        print(f"Mock DB: Finding one with query: {query}")
         for item in self.data:
             if self._match_query(item, query):
                 return item
         return None
     
-    async def find(self, query=None):
+    def find(self, query=None):
         class MockCursor:
             def __init__(self, data, query):
                 self.data = data
@@ -170,8 +158,12 @@ class MockCollection:
                 return results[:limit] if limit else results
             
             def _match_query(self, item, query):
+                from bson import ObjectId
                 for key, value in query.items():
-                    if key not in item or item[key] != value:
+                    if key == "_id" and isinstance(value, ObjectId):
+                        if str(item.get(key, "")) != str(value):
+                            return False
+                    elif key not in item or item[key] != value:
                         return False
                 return True
         
@@ -181,7 +173,6 @@ class MockCollection:
         from bson import ObjectId
         document['_id'] = ObjectId()
         self.data.append(document)
-        print(f"Mock DB: Inserted document with ID: {document['_id']}")
         return type('Result', (), {'inserted_id': document['_id']})()
     
     async def update_one(self, query, update):
@@ -189,7 +180,6 @@ class MockCollection:
             if self._match_query(item, query):
                 if '$set' in update:
                     item.update(update['$set'])
-                print(f"Mock DB: Updated document")
                 return type('Result', (), {'modified_count': 1})()
         return type('Result', (), {'modified_count': 0})()
     
@@ -220,12 +210,18 @@ class MockCollection:
         return MockAggregate()
     
     async def create_index(self, *args, **kwargs):
-        print(f"Mock DB: Creating index with args: {args}")
         pass  # Mock index creation
     
     def _match_query(self, item, query):
+        from bson import ObjectId
         for key, value in query.items():
-            if key not in item or item[key] != value:
+            if key == "_id" and isinstance(value, ObjectId):
+                if str(item.get(key, "")) != str(value):
+                    return False
+            elif key == "$in" and isinstance(value, list):
+                if item.get(key.replace("$in", "")) not in value:
+                    return False
+            elif key not in item or item[key] != value:
                 return False
         return True
 
@@ -236,8 +232,7 @@ class MockDatabase:
         self.messages = MockCollection()
         self.spaces = MockCollection()
         self.documents = MockCollection()
-        print("Mock database initialized")
+        print("✅ Mock database initialized for development")
     
     async def command(self, command):
-        print(f"Mock DB: Executing command: {command}")
-        return {"ok": 1}
+        return {"ok": 1.0}  # Mock successful ping

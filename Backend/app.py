@@ -2,10 +2,11 @@
 from fastapi import FastAPI, File, UploadFile, HTTPException, Query, Depends, status
 from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.encoders import jsonable_encoder
 from datetime import datetime, timedelta
 import os
 import shutil
-from typing import List, Optional
+from typing import List, Optional, Dict, Any
 from bson import ObjectId
 import json
 
@@ -25,6 +26,23 @@ from dotenv import load_dotenv
 
 # Load environment variables
 load_dotenv()
+
+# Custom JSON encoder to handle ObjectId and datetime serialization issues
+def custom_jsonable_encoder(obj) -> Any:
+    """Custom JSON encoder that safely handles ObjectId and datetime objects"""
+    if isinstance(obj, ObjectId):
+        return str(obj)
+    elif isinstance(obj, datetime):
+        return obj.isoformat()
+    elif isinstance(obj, dict):
+        return {key: custom_jsonable_encoder(value) for key, value in obj.items()}
+    elif isinstance(obj, list):
+        return [custom_jsonable_encoder(item) for item in obj]
+    elif hasattr(obj, '__dict__'):
+        # Handle Pydantic models and other objects with __dict__
+        return custom_jsonable_encoder(obj.__dict__)
+    else:
+        return obj
 
 # Initialize FastAPI app
 app = FastAPI(
@@ -74,7 +92,7 @@ async def root():
     }
 
 # Authentication endpoints
-@app.post("/auth/register", response_model=dict)
+@app.post("/auth/register")
 async def register_user(user: UserCreate):
     """Register a new user with enhanced error handling"""
     
@@ -150,7 +168,7 @@ async def register_user(user: UserCreate):
             detail="Registration failed due to server error"
         )
 
-@app.post("/auth/login", response_model=dict)
+@app.post("/auth/login")
 async def login_user(user_credentials: UserLogin):
     """Login user"""
     user = await authenticate_user(user_credentials.email, user_credentials.password)
@@ -176,14 +194,14 @@ async def login_user(user_credentials: UserLogin):
         }
     }
 
-@app.get("/auth/me", response_model=dict)
+@app.get("/auth/me")
 async def read_users_me(current_user: dict = Depends(get_current_active_user)):
     """Get current user information"""
     return {
         "id": str(current_user["_id"]),
         "username": current_user["username"],
         "email": current_user["email"],
-        "created_at": current_user["created_at"]
+        "created_at": current_user["created_at"].isoformat() if current_user.get("created_at") else None
     }
 
 # Chat endpoints
@@ -195,13 +213,19 @@ async def get_user_chats(current_user: dict = Depends(get_current_active_user)):
         {"user_id": ObjectId(current_user["_id"])}
     ).sort("updated_at", -1).to_list(100)
     
-    # Convert ObjectIds to strings
+    # Convert ObjectIds to strings and dates to ISO format
+    chat_list = []
     for chat in chats:
-        chat["id"] = str(chat["_id"])
-        chat["user_id"] = str(chat["user_id"])
-        del chat["_id"]
+        chat_data = {
+            "id": str(chat["_id"]),
+            "user_id": str(chat["user_id"]),
+            "title": chat["title"],
+            "created_at": chat["created_at"].isoformat() if chat.get("created_at") else None,
+            "updated_at": chat["updated_at"].isoformat() if chat.get("updated_at") else None
+        }
+        chat_list.append(chat_data)
     
-    return {"chats": chats}
+    return {"chats": chat_list}
 
 @app.post("/chats")
 async def create_chat(
@@ -226,8 +250,8 @@ async def create_chat(
             "id": str(result.inserted_id),
             "title": chat.title,
             "user_id": str(current_user["_id"]),
-            "created_at": chat_doc["created_at"],
-            "updated_at": chat_doc["updated_at"]
+            "created_at": chat_doc["created_at"].isoformat(),
+            "updated_at": chat_doc["updated_at"].isoformat()
         }
     }
 
@@ -251,13 +275,19 @@ async def get_chat_messages(
         {"chat_id": ObjectId(chat_id)}
     ).sort("timestamp", 1).to_list(1000)
     
-    # Convert ObjectIds to strings
+    # Convert ObjectIds to strings and dates to ISO format
+    message_list = []
     for message in messages:
-        message["id"] = str(message["_id"])
-        message["chat_id"] = str(message["chat_id"])
-        del message["_id"]
+        message_data = {
+            "id": str(message["_id"]),
+            "chat_id": str(message["chat_id"]),
+            "sender": message["sender"],
+            "content": message["content"],
+            "timestamp": message["timestamp"].isoformat() if message.get("timestamp") else None
+        }
+        message_list.append(message_data)
     
-    return {"messages": messages}
+    return {"messages": message_list}
 
 @app.post("/chats/{chat_id}/messages")
 async def send_message(
@@ -330,13 +360,13 @@ async def send_message(
             "id": str(user_result.inserted_id),
             "content": message.content,
             "sender": "user",
-            "timestamp": user_message_doc["timestamp"]
+            "timestamp": user_message_doc["timestamp"].isoformat()
         },
         "ai_message": {
             "id": str(ai_result.inserted_id),
             "content": ai_response,
             "sender": "assistant",
-            "timestamp": ai_message_doc["timestamp"]
+            "timestamp": ai_message_doc["timestamp"].isoformat()
         }
     }
 
@@ -369,8 +399,8 @@ async def list_user_spaces(current_user: dict = Depends(get_current_active_user)
             "description": space["description"],
             "document_count": doc_count,
             "total_size_bytes": total_size,
-            "created_at": space["created_at"],
-            "updated_at": space["updated_at"]
+            "created_at": space["created_at"].isoformat() if space.get("created_at") else None,
+            "updated_at": space["updated_at"].isoformat() if space.get("updated_at") else None
         }
         spaces_with_stats.append(space_with_stats)
     
@@ -414,8 +444,8 @@ async def create_space(
             "id": str(result.inserted_id),
             "name": space.name,
             "description": space.description,
-            "created_at": space_doc["created_at"],
-            "updated_at": space_doc["updated_at"]
+            "created_at": space_doc["created_at"].isoformat(),
+            "updated_at": space_doc["updated_at"].isoformat()
         }
     }
 
@@ -448,7 +478,7 @@ async def get_space(
             "original_file_name": doc["original_file_name"],
             "file_type": doc["file_type"],
             "size_in_bytes": doc["size_in_bytes"],
-            "uploaded_at": doc["uploaded_at"]
+            "uploaded_at": doc["uploaded_at"].isoformat() if doc.get("uploaded_at") else None
         }
         doc_list.append(doc_info)
         total_size += doc["size_in_bytes"]
@@ -460,8 +490,8 @@ async def get_space(
         "document_count": len(doc_list),
         "total_size_bytes": total_size,
         "documents": doc_list,
-        "created_at": space["created_at"],
-        "updated_at": space["updated_at"]
+        "created_at": space["created_at"].isoformat() if space.get("created_at") else None,
+        "updated_at": space["updated_at"].isoformat() if space.get("updated_at") else None
     }
 
 @app.put("/spaces/{space_id}")
@@ -824,7 +854,7 @@ async def health_check():
             "mongodb_status": db_status,
             "authentication": "enabled"
         },
-        "timestamp": datetime.utcnow()
+        "timestamp": datetime.utcnow().isoformat()
     }
 
 @app.get("/stats")

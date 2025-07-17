@@ -7,7 +7,7 @@ from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from decouple import config
 from bson import ObjectId
-from models import User, TokenData
+from models import TokenData
 from database import get_database
 
 # Configuration
