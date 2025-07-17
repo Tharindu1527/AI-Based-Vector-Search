@@ -1,32 +1,6 @@
-# Backend/models.py - Fixed version to prevent recursion errors
-from pydantic import BaseModel, Field, ConfigDict
-from typing import Optional, List, Any
+from pydantic import BaseModel, Field
+from typing import Optional, List, Dict, Any
 from datetime import datetime
-from bson import ObjectId
-
-class PyObjectId(ObjectId):
-    @classmethod
-    def __get_pydantic_core_schema__(cls, _source_type: Any, _handler):
-        from pydantic_core import core_schema
-        return core_schema.json_or_python_schema(
-            json_schema=core_schema.str_schema(),
-            python_schema=core_schema.union_schema([
-                core_schema.is_instance_schema(ObjectId),
-                core_schema.chain_schema([
-                    core_schema.str_schema(),
-                    core_schema.no_info_plain_validator_function(cls.validate),
-                ])
-            ]),
-            serialization=core_schema.plain_serializer_function_ser_schema(
-                lambda x: str(x)
-            ),
-        )
-
-    @classmethod
-    def validate(cls, v):
-        if not ObjectId.is_valid(v):
-            raise ValueError("Invalid objectid")
-        return ObjectId(v)
 
 # User Models
 class UserBase(BaseModel):
@@ -46,14 +20,6 @@ class UserResponse(BaseModel):
     email: str
     created_at: Optional[str] = None
 
-    model_config = ConfigDict(
-        from_attributes=True,
-        json_encoders={
-            datetime: lambda v: v.isoformat() if v else None,
-            ObjectId: str
-        }
-    )
-
 # Chat Models
 class ChatBase(BaseModel):
     title: Optional[str] = Field(default="New Chat", max_length=200)
@@ -67,14 +33,6 @@ class ChatResponse(BaseModel):
     user_id: str
     created_at: Optional[str] = None
     updated_at: Optional[str] = None
-
-    model_config = ConfigDict(
-        from_attributes=True,
-        json_encoders={
-            datetime: lambda v: v.isoformat() if v else None,
-            ObjectId: str
-        }
-    )
 
 # Message Models
 class MessageBase(BaseModel):
@@ -90,14 +48,6 @@ class MessageResponse(BaseModel):
     sender: str
     chat_id: str
     timestamp: Optional[str] = None
-
-    model_config = ConfigDict(
-        from_attributes=True,
-        json_encoders={
-            datetime: lambda v: v.isoformat() if v else None,
-            ObjectId: str
-        }
-    )
 
 # Space Models
 class SpaceBase(BaseModel):
@@ -120,14 +70,6 @@ class SpaceResponse(BaseModel):
     created_at: Optional[str] = None
     updated_at: Optional[str] = None
 
-    model_config = ConfigDict(
-        from_attributes=True,
-        json_encoders={
-            datetime: lambda v: v.isoformat() if v else None,
-            ObjectId: str
-        }
-    )
-
 # Document Models
 class DocumentBase(BaseModel):
     original_file_name: str = Field(..., max_length=255)
@@ -141,14 +83,6 @@ class DocumentResponse(BaseModel):
     size_in_bytes: int
     space_id: str
     uploaded_at: Optional[str] = None
-
-    model_config = ConfigDict(
-        from_attributes=True,
-        json_encoders={
-            datetime: lambda v: v.isoformat() if v else None,
-            ObjectId: str
-        }
-    )
 
 # Token Models
 class Token(BaseModel):
@@ -173,26 +107,11 @@ class SearchResult(BaseModel):
     documents_searched: int = 0
     spaces_searched: int = 0
 
-    model_config = ConfigDict(
-        from_attributes=True,
-        json_encoders={
-            datetime: lambda v: v.isoformat() if v else None,
-            ObjectId: str
-        }
-    )
-
 # Health Check Models
 class HealthResponse(BaseModel):
     status: str
     components: dict
     timestamp: str
-
-    model_config = ConfigDict(
-        from_attributes=True,
-        json_encoders={
-            datetime: lambda v: v.isoformat() if v else None
-        }
-    )
 
 # Stats Models
 class UserStats(BaseModel):
@@ -201,14 +120,11 @@ class UserStats(BaseModel):
     chats_count: int = 0
     total_storage_bytes: int = 0
 
+class SystemInfo(BaseModel):
+    supported_formats: List[str] = []
+    max_file_size_mb: int = 50
+
 class StatsResponse(BaseModel):
     user_stats: UserStats
-    system_info: dict
+    system_info: SystemInfo
     pinecone_stats: Optional[dict] = None
-
-    model_config = ConfigDict(
-        from_attributes=True,
-        json_encoders={
-            datetime: lambda v: v.isoformat() if v else None
-        }
-    )

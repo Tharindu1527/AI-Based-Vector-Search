@@ -1,4 +1,3 @@
-# Backend/database.py - Fixed version with better error handling
 import os
 import asyncio
 from motor.motor_asyncio import AsyncIOMotorClient

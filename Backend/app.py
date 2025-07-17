@@ -1,4 +1,3 @@
-# Backend/app.py
 from fastapi import FastAPI, File, UploadFile, HTTPException, Query, Depends, status
 from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
@@ -6,7 +5,7 @@ from fastapi.encoders import jsonable_encoder
 from datetime import datetime, timedelta
 import os
 import shutil
-from typing import List, Optional, Dict, Any
+from typing import List, Optional, Dict, Any, Union
 from bson import ObjectId
 import json
 
@@ -27,22 +26,72 @@ from dotenv import load_dotenv
 # Load environment variables
 load_dotenv()
 
-# Custom JSON encoder to handle ObjectId and datetime serialization issues
-def custom_jsonable_encoder(obj) -> Any:
-    """Custom JSON encoder that safely handles ObjectId and datetime objects"""
-    if isinstance(obj, ObjectId):
+class CustomJSONEncoder(json.JSONEncoder):
+    """Custom JSON encoder that handles ObjectId and datetime objects"""
+    def default(self, obj):
+        if isinstance(obj, ObjectId):
+            return str(obj)
+        elif isinstance(obj, datetime):
+            return obj.isoformat()
+        elif hasattr(obj, '__dict__'):
+            # Convert objects with __dict__ to dictionaries, but limit depth
+            return str(obj)  # Simple string conversion to avoid recursion
+        return super().default(obj)
+
+def safe_serialize(obj, max_depth=3, current_depth=0):
+    """Safely serialize objects to JSON-compatible format"""
+    if current_depth > max_depth:
+        return str(obj)
+    
+    if obj is None:
+        return None
+    elif isinstance(obj, (str, int, float, bool)):
+        return obj
+    elif isinstance(obj, ObjectId):
         return str(obj)
     elif isinstance(obj, datetime):
         return obj.isoformat()
     elif isinstance(obj, dict):
-        return {key: custom_jsonable_encoder(value) for key, value in obj.items()}
-    elif isinstance(obj, list):
-        return [custom_jsonable_encoder(item) for item in obj]
-    elif hasattr(obj, '__dict__'):
-        # Handle Pydantic models and other objects with __dict__
-        return custom_jsonable_encoder(obj.__dict__)
+        result = {}
+        for key, value in obj.items():
+            try:
+                result[str(key)] = safe_serialize(value, max_depth, current_depth + 1)
+            except Exception:
+                result[str(key)] = str(value)
+        return result
+    elif isinstance(obj, (list, tuple)):
+        result = []
+        for item in obj:
+            try:
+                result.append(safe_serialize(item, max_depth, current_depth + 1))
+            except Exception:
+                result.append(str(item))
+        return result
     else:
-        return obj
+        # For any other object type, convert to string to avoid recursion
+        return str(obj)
+
+def create_json_response(data: Any, status_code: int = 200) -> JSONResponse:
+    """Create a JSON response with safe serialization"""
+    try:
+        safe_data = safe_serialize(data)
+        return JSONResponse(
+            content=safe_data,
+            status_code=status_code,
+            headers={"Content-Type": "application/json"}
+        )
+    except Exception as e:
+        print(f"Serialization error: {e}")
+        error_response = {
+            "error": "Serialization error",
+            "message": str(e),
+            "status": "error"
+        }
+        return JSONResponse(
+            content=error_response,
+            status_code=500,
+            headers={"Content-Type": "application/json"}
+        )
 
 # Initialize FastAPI app
 app = FastAPI(
@@ -83,13 +132,14 @@ async def shutdown_event():
 @app.get("/")
 async def root():
     """Root endpoint with API information"""
-    return {
+    data = {
         "message": "Beecok - AI-Powered Semantic Search API",
         "version": "2.0.0",
         "description": "Upload documents to spaces and perform semantic search using MongoDB, Pinecone and Google Gemini",
         "features": ["User Authentication", "Document Spaces", "AI Chat", "Semantic Search"],
         "supported_formats": SUPPORTED_EXTENSIONS
     }
+    return create_json_response(data)
 
 # Authentication endpoints
 @app.post("/auth/register")
@@ -147,7 +197,7 @@ async def register_user(user: UserCreate):
             data={"sub": user.email}, expires_delta=access_token_expires
         )
         
-        return {
+        response_data = {
             "message": "User registered successfully",
             "access_token": access_token,
             "token_type": "bearer",
@@ -157,6 +207,8 @@ async def register_user(user: UserCreate):
                 "email": user.email
             }
         }
+        
+        return create_json_response(response_data)
         
     except HTTPException:
         # Re-raise HTTP exceptions
@@ -184,7 +236,7 @@ async def login_user(user_credentials: UserLogin):
         data={"sub": user["email"]}, expires_delta=access_token_expires
     )
     
-    return {
+    response_data = {
         "access_token": access_token,
         "token_type": "bearer",
         "user": {
@@ -193,16 +245,19 @@ async def login_user(user_credentials: UserLogin):
             "email": user["email"]
         }
     }
+    
+    return create_json_response(response_data)
 
 @app.get("/auth/me")
 async def read_users_me(current_user: dict = Depends(get_current_active_user)):
     """Get current user information"""
-    return {
+    response_data = {
         "id": str(current_user["_id"]),
         "username": current_user["username"],
         "email": current_user["email"],
         "created_at": current_user["created_at"].isoformat() if current_user.get("created_at") else None
     }
+    return create_json_response(response_data)
 
 # Chat endpoints
 @app.get("/chats")
@@ -225,7 +280,7 @@ async def get_user_chats(current_user: dict = Depends(get_current_active_user)):
         }
         chat_list.append(chat_data)
     
-    return {"chats": chat_list}
+    return create_json_response({"chats": chat_list})
 
 @app.post("/chats")
 async def create_chat(
@@ -244,7 +299,7 @@ async def create_chat(
     
     result = await db.chats.insert_one(chat_doc)
     
-    return {
+    response_data = {
         "message": "Chat created successfully",
         "chat": {
             "id": str(result.inserted_id),
@@ -254,6 +309,8 @@ async def create_chat(
             "updated_at": chat_doc["updated_at"].isoformat()
         }
     }
+    
+    return create_json_response(response_data)
 
 @app.get("/chats/{chat_id}/messages")
 async def get_chat_messages(
@@ -287,7 +344,7 @@ async def get_chat_messages(
         }
         message_list.append(message_data)
     
-    return {"messages": message_list}
+    return create_json_response({"messages": message_list})
 
 @app.post("/chats/{chat_id}/messages")
 async def send_message(
@@ -355,7 +412,7 @@ async def send_message(
         {"$set": {"updated_at": datetime.utcnow()}}
     )
     
-    return {
+    response_data = {
         "user_message": {
             "id": str(user_result.inserted_id),
             "content": message.content,
@@ -369,6 +426,8 @@ async def send_message(
             "timestamp": ai_message_doc["timestamp"].isoformat()
         }
     }
+    
+    return create_json_response(response_data)
 
 # Spaces endpoints
 @app.get("/spaces")
@@ -404,10 +463,12 @@ async def list_user_spaces(current_user: dict = Depends(get_current_active_user)
         }
         spaces_with_stats.append(space_with_stats)
     
-    return {
+    response_data = {
         "spaces": spaces_with_stats,
         "total_spaces": len(spaces_with_stats)
     }
+    
+    return create_json_response(response_data)
 
 @app.post("/spaces")
 async def create_space(
@@ -438,7 +499,7 @@ async def create_space(
     
     result = await db.spaces.insert_one(space_doc)
     
-    return {
+    response_data = {
         "message": f"Space '{space.name}' created successfully",
         "space": {
             "id": str(result.inserted_id),
@@ -448,6 +509,8 @@ async def create_space(
             "updated_at": space_doc["updated_at"].isoformat()
         }
     }
+    
+    return create_json_response(response_data)
 
 @app.get("/spaces/{space_id}")
 async def get_space(
@@ -483,7 +546,7 @@ async def get_space(
         doc_list.append(doc_info)
         total_size += doc["size_in_bytes"]
     
-    return {
+    response_data = {
         "id": str(space["_id"]),
         "name": space["name"],
         "description": space["description"],
@@ -493,6 +556,8 @@ async def get_space(
         "created_at": space["created_at"].isoformat() if space.get("created_at") else None,
         "updated_at": space["updated_at"].isoformat() if space.get("updated_at") else None
     }
+    
+    return create_json_response(response_data)
 
 @app.put("/spaces/{space_id}")
 async def update_space(
@@ -535,7 +600,7 @@ async def update_space(
         {"$set": update_data}
     )
     
-    return {"message": "Space updated successfully"}
+    return create_json_response({"message": "Space updated successfully"})
 
 @app.delete("/spaces/{space_id}")
 async def delete_space(
@@ -579,10 +644,12 @@ async def delete_space(
     # Delete space
     await db.spaces.delete_one({"_id": ObjectId(space_id)})
     
-    return {
+    response_data = {
         "message": f"Space '{space['name']}' and all its documents deleted successfully",
         "documents_deleted": len(documents)
     }
+    
+    return create_json_response(response_data)
 
 # Document upload endpoint
 @app.post("/spaces/{space_id}/upload")
@@ -668,7 +735,7 @@ async def upload_file_to_space(
         
         result = await db.documents.insert_one(doc_doc)
         
-        return {
+        response_data = {
             "message": f"File uploaded to space '{space['name']}' successfully",
             "document": {
                 "id": str(result.inserted_id),
@@ -680,6 +747,8 @@ async def upload_file_to_space(
                 "status": "indexed"
             }
         }
+        
+        return create_json_response(response_data)
         
     except Exception as e:
         # Clean up file if processing failed
@@ -732,7 +801,7 @@ async def search_documents(
         selected_spaces = [str(space["_id"]) for space in user_spaces]
     
     if not selected_spaces:
-        return {
+        response_data = {
             "answer": "You don't have any spaces created yet. Please create a space and upload some documents first.",
             "sources": [],
             "query": q,
@@ -740,6 +809,7 @@ async def search_documents(
             "documents_searched": 0,
             "spaces_searched": 0
         }
+        return create_json_response(response_data)
     
     # Validate filename exists if provided
     if filename:
@@ -762,13 +832,23 @@ async def search_documents(
             max_results=max_results
         )
         
-        return results
+        return create_json_response(results)
         
     except Exception as e:
-        raise HTTPException(
-            status_code=500,
-            detail=f"Search error: {str(e)}"
-        )
+        response_data = {
+            "answer": f"An error occurred while searching: {str(e)}",
+            "sources": [],
+            "query": q,
+            "space_ids": space_ids,
+            "filename_filter": filename,
+            "document_summary": {},
+            "cross_document_insights": [],
+            "total_results": 0,
+            "documents_searched": 0,
+            "spaces_searched": 0,
+            "search_scope": 'error'
+        }
+        return create_json_response(response_data)
 
 # Delete document from space
 @app.delete("/spaces/{space_id}/documents/{document_id}")
@@ -811,11 +891,13 @@ async def delete_document_from_space(
         # Delete from database
         await db.documents.delete_one({"_id": ObjectId(document_id)})
         
-        return {
+        response_data = {
             "message": f"Document '{document['original_file_name']}' deleted successfully",
             "filename": document["original_file_name"],
             "space_id": space_id
         }
+        
+        return create_json_response(response_data)
         
     except Exception as e:
         raise HTTPException(
@@ -847,7 +929,7 @@ async def health_check():
     if "error" in health_status.get('pinecone_status', '') or "error" in db_status:
         overall_health = "unhealthy"
     
-    return {
+    response_data = {
         "status": overall_health,
         "components": {
             **health_status,
@@ -856,6 +938,8 @@ async def health_check():
         },
         "timestamp": datetime.utcnow().isoformat()
     }
+    
+    return create_json_response(response_data)
 
 @app.get("/stats")
 async def get_stats(current_user: dict = Depends(get_current_active_user)):
@@ -887,7 +971,7 @@ async def get_stats(current_user: dict = Depends(get_current_active_user)):
         # Get Pinecone stats
         index_stats = semantic_searcher.get_index_stats()
         
-        return {
+        response_data = {
             "user_stats": {
                 "spaces_count": user_spaces_count,
                 "documents_count": user_documents_count,
@@ -900,6 +984,8 @@ async def get_stats(current_user: dict = Depends(get_current_active_user)):
                 "max_file_size_mb": 50
             }
         }
+        
+        return create_json_response(response_data)
         
     except Exception as e:
         raise HTTPException(

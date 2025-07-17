@@ -1,4 +1,4 @@
-import fitz  # PyMuPDF
+import fitz 
 from docx import Document
 from pptx import Presentation
 import os
